@@ -1,28 +1,105 @@
 #include "settings.h"
 #include "solar.h"
+#include "ui_html.h"
 
+#include <windows.h>
+#include <windowsx.h>
+#include <dwmapi.h>
 #include <shellapi.h>
+#include <shlobj.h>
+#include <wrl/client.h>
+#include <wrl/event.h>
+#include <WebView2.h>
 
 #include <cmath>
 #include <cwchar>
+#include <iomanip>
 #include <sstream>
 #include <string>
+
+using Microsoft::WRL::Callback;
+using Microsoft::WRL::ComPtr;
 
 namespace geodark {
 namespace {
 
-enum ControlId {
-    id_auto = 100, id_mode, id_latitude, id_longitude, id_sunrise_offset,
-    id_sunset_offset, id_startup, id_save, id_refresh_location,
-    id_authorize, id_light, id_dark, id_status, id_refresh_status
-};
+std::wstring escape_json(const std::wstring& input) {
+    std::wstring out;
+    out.reserve(input.size() * 2);
+    for (wchar_t c : input) {
+        switch (c) {
+        case L'\"': out += L"\\\""; break;
+        case L'\\': out += L"\\\\"; break;
+        case L'\b': out += L"\\b"; break;
+        case L'\f': out += L"\\f"; break;
+        case L'\n': out += L"\\n"; break;
+        case L'\r': out += L"\\r"; break;
+        case L'\t': out += L"\\t"; break;
+        default:
+            if (c < 32) {
+                wchar_t buf[8];
+                swprintf_s(buf, L"\\u%04x", static_cast<unsigned int>(c));
+                out += buf;
+            } else {
+                out += c;
+            }
+            break;
+        }
+    }
+    return out;
+}
 
-std::wstring control_text(HWND control) {
-    const int length = GetWindowTextLengthW(control);
-    std::wstring value(static_cast<std::size_t>(length) + 1, L'\0');
-    GetWindowTextW(control, value.data(), length + 1);
-    value.resize(static_cast<std::size_t>(length));
-    return value;
+std::wstring json_extract_string(const std::wstring& json, const std::wstring& key) {
+    const std::wstring pattern = L"\"" + key + L"\"";
+    std::size_t pos = json.find(pattern);
+    if (pos == std::wstring::npos) return L"";
+    pos = json.find(L':', pos + pattern.size());
+    if (pos == std::wstring::npos) return L"";
+    pos = json.find_first_not_of(L" \t\r\n", pos + 1);
+    if (pos == std::wstring::npos || json[pos] != L'\"') return L"";
+    ++pos;
+    std::wstring result;
+    bool escaped = false;
+    for (; pos < json.size(); ++pos) {
+        const wchar_t c = json[pos];
+        if (escaped) {
+            result += c;
+            escaped = false;
+        } else if (c == L'\\') {
+            escaped = true;
+        } else if (c == L'\"') {
+            break;
+        } else {
+            result += c;
+        }
+    }
+    return result;
+}
+
+int json_extract_int(const std::wstring& json, const std::wstring& key, int default_val = 0) {
+    const std::wstring pattern = L"\"" + key + L"\"";
+    std::size_t pos = json.find(pattern);
+    if (pos == std::wstring::npos) return default_val;
+    pos = json.find(L':', pos + pattern.size());
+    if (pos == std::wstring::npos) return default_val;
+    pos = json.find_first_not_of(L" \t\r\n", pos + 1);
+    if (pos == std::wstring::npos) return default_val;
+    wchar_t* end = nullptr;
+    const long val = wcstol(json.c_str() + pos, &end, 10);
+    return end != (json.c_str() + pos) ? static_cast<int>(val) : default_val;
+}
+
+bool json_extract_bool(const std::wstring& json, const std::wstring& key, bool default_val = false) {
+    const std::wstring pattern = L"\"" + key + L"\"";
+    std::size_t pos = json.find(pattern);
+    if (pos == std::wstring::npos) return default_val;
+    pos = json.find(L':', pos + pattern.size());
+    if (pos == std::wstring::npos) return default_val;
+    pos = json.find_first_not_of(L" \t\r\n", pos + 1);
+    if (pos == std::wstring::npos) return default_val;
+    if (json.compare(pos, 4, L"true") == 0) return true;
+    if (json.compare(pos, 5, L"false") == 0) return false;
+    return default_val;
 }
 
 bool parse_double(const std::wstring& text, double& result) {
@@ -42,12 +119,6 @@ bool parse_offset(const std::wstring& text, int& result) {
     return true;
 }
 
-std::wstring coordinate_text(double value) {
-    wchar_t buffer[48];
-    swprintf_s(buffer, L"%.6f", value);
-    return buffer;
-}
-
 const wchar_t* source_name(LocationSource source) {
     switch (source) {
     case LocationSource::Windows: return L"Windows 定位";
@@ -57,193 +128,304 @@ const wchar_t* source_name(LocationSource source) {
     }
 }
 
+std::wstring get_webview_user_data_path() {
+    PWSTR local_app_data = nullptr;
+    if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_LocalAppData, 0, nullptr, &local_app_data)) && local_app_data) {
+        std::wstring path = local_app_data;
+        CoTaskMemFree(local_app_data);
+        path += L"\\GeoDark";
+        CreateDirectoryW(path.c_str(), nullptr);
+        path += L"\\WebView2";
+        CreateDirectoryW(path.c_str(), nullptr);
+        return path;
+    }
+    return L"";
+}
+
 class UiApp {
 public:
-    explicit UiApp(HINSTANCE instance) : instance_(instance) {}
+    explicit UiApp(HINSTANCE instance) : instance_(instance) {
+        start_in_settings_ = (wcsstr(GetCommandLineW(), L"--settings") != nullptr);
+    }
 
     int run(int show) {
-        WNDCLASSW klass{};
+        CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+
+        WNDCLASSEXW klass{};
+        klass.cbSize = sizeof(WNDCLASSEXW);
         klass.lpfnWndProc = &UiApp::window_proc;
         klass.hInstance = instance_;
         klass.lpszClassName = L"GeoDarkSettingsWindow";
         klass.hCursor = LoadCursorW(nullptr, IDC_ARROW);
-        klass.hbrBackground = reinterpret_cast<HBRUSH>(COLOR_WINDOW + 1);
-        if (!RegisterClassW(&klass)) return 1;
-        window_ = CreateWindowExW(WS_EX_APPWINDOW, klass.lpszClassName, L"GeoDark 设置",
-                                  WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX,
-                                  CW_USEDEFAULT, CW_USEDEFAULT, 640, 625,
-                                  nullptr, nullptr, instance_, this);
+        klass.hIcon = LoadIconW(instance_, MAKEINTRESOURCEW(1));
+        klass.hIconSm = LoadIconW(instance_, MAKEINTRESOURCEW(1));
+        klass.hbrBackground = nullptr;
+
+        if (!RegisterClassExW(&klass)) return 1;
+
+        const int width = 940;
+        const int height = 660;
+        const int screen_w = GetSystemMetrics(SM_CXSCREEN);
+        const int screen_h = GetSystemMetrics(SM_CYSCREEN);
+        const int x = (screen_w - width) / 2;
+        const int y = (screen_h - height) / 2;
+
+        window_ = CreateWindowExW(
+            WS_EX_APPWINDOW,
+            klass.lpszClassName,
+            L"GeoDark 设置",
+            WS_POPUP | WS_THICKFRAME | WS_MINIMIZEBOX | WS_MAXIMIZEBOX | WS_CLIPCHILDREN | WS_CLIPSIBLINGS,
+            x > 0 ? x : CW_USEDEFAULT,
+            y > 0 ? y : CW_USEDEFAULT,
+            width, height,
+            nullptr, nullptr, instance_, this);
+
         if (!window_) return 1;
+
+        // Apply DWM frame extension for seamless shadow and border
+        MARGINS margins = { 1, 1, 1, 1 };
+        DwmExtendFrameIntoClientArea(window_, &margins);
+
+        // Dark mode titlebar attribute if supported
+        BOOL dark = TRUE;
+        DwmSetWindowAttribute(window_, 20 /* DWMWA_USE_IMMERSIVE_DARK_MODE */, &dark, sizeof(dark));
+
+        init_webview();
+
         ShowWindow(window_, show);
         UpdateWindow(window_);
+
         MSG message{};
         while (GetMessageW(&message, nullptr, 0, 0) > 0) {
             TranslateMessage(&message);
             DispatchMessageW(&message);
         }
+
+        CoUninitialize();
         return 0;
     }
 
 private:
-    HWND create(const wchar_t* klass, const wchar_t* text, DWORD style,
-                int x, int y, int width, int height, int id = 0, DWORD ex = 0) {
-        HWND control = CreateWindowExW(ex, klass, text, WS_CHILD | WS_VISIBLE | style,
-                                       x, y, width, height, window_,
-                                       reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)),
-                                       instance_, nullptr);
-        SendMessageW(control, WM_SETFONT, reinterpret_cast<WPARAM>(font_), TRUE);
-        return control;
+    void init_webview() {
+        const std::wstring user_data = get_webview_user_data_path();
+
+        CreateCoreWebView2EnvironmentWithOptions(
+            nullptr,
+            user_data.empty() ? nullptr : user_data.c_str(),
+            nullptr,
+            Callback<ICoreWebView2CreateCoreWebView2EnvironmentCompletedHandler>(
+                [this](HRESULT hr, ICoreWebView2Environment* env) -> HRESULT {
+                    if (FAILED(hr) || !env) return hr;
+                    env->CreateCoreWebView2Controller(
+                        window_,
+                        Callback<ICoreWebView2CreateCoreWebView2ControllerCompletedHandler>(
+                            [this](HRESULT res, ICoreWebView2Controller* controller) -> HRESULT {
+                                if (FAILED(res) || !controller) return res;
+                                controller_ = controller;
+                                controller_->get_CoreWebView2(&webview_);
+                                if (!webview_) return E_FAIL;
+
+                                RECT bounds;
+                                GetClientRect(window_, &bounds);
+                                controller_->put_Bounds(bounds);
+
+                                ComPtr<ICoreWebView2Settings> settings;
+                                webview_->get_Settings(&settings);
+                                if (settings) {
+                                    settings->put_AreDefaultContextMenusEnabled(FALSE);
+                                    settings->put_IsStatusBarEnabled(FALSE);
+                                }
+
+                                webview_->add_WebMessageReceived(
+                                    Callback<ICoreWebView2WebMessageReceivedEventHandler>(
+                                        [this](ICoreWebView2*, ICoreWebView2WebMessageReceivedEventArgs* args) -> HRESULT {
+                                            PWSTR raw_json = nullptr;
+                                            if (SUCCEEDED(args->get_WebMessageAsJson(&raw_json)) && raw_json) {
+                                                handle_web_message(raw_json);
+                                                CoTaskMemFree(raw_json);
+                                            }
+                                            return S_OK;
+                                        }).Get(),
+                                    &message_token_);
+
+                                const std::string html_utf8 = get_ui_html();
+                                std::wstring html_utf16;
+                                const int len = MultiByteToWideChar(CP_UTF8, 0, html_utf8.c_str(), -1, nullptr, 0);
+                                if (len > 0) {
+                                    html_utf16.resize(static_cast<std::size_t>(len - 1));
+                                    MultiByteToWideChar(CP_UTF8, 0, html_utf8.c_str(), -1, html_utf16.data(), len);
+                                }
+                                webview_->NavigateToString(html_utf16.c_str());
+
+                                send_state_to_ui();
+                                SetTimer(window_, 1, 3000, nullptr);
+                                return S_OK;
+                            }).Get());
+                    return S_OK;
+                }).Get());
     }
 
-    void create_controls() {
-        font_ = static_cast<HFONT>(GetStockObject(DEFAULT_GUI_FONT));
-        auto_ = create(L"BUTTON", L"自动模式", BS_AUTOCHECKBOX, 20, 18, 160, 28, id_auto);
-        create(L"STATIC", L"定位方式", 0, 20, 59, 100, 25);
-        mode_ = create(L"COMBOBOX", L"", CBS_DROPDOWNLIST | WS_VSCROLL,
-                       130, 55, 240, 200, id_mode);
-        SendMessageW(mode_, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"Windows 自动定位"));
-        SendMessageW(mode_, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"手动坐标"));
+    void handle_web_message(const std::wstring& json) {
+        const std::wstring action = json_extract_string(json, L"action");
 
-        create(L"STATIC", L"纬度 (-90 ~ 90)", 0, 20, 99, 140, 25);
-        latitude_ = create(L"EDIT", L"", ES_AUTOHSCROLL, 175, 95, 160, 27,
-                           id_latitude, WS_EX_CLIENTEDGE);
-        create(L"STATIC", L"经度 (-180 ~ 180)", 0, 345, 99, 145, 25);
-        longitude_ = create(L"EDIT", L"", ES_AUTOHSCROLL, 490, 95, 120, 27,
-                            id_longitude, WS_EX_CLIENTEDGE);
+        if (action == L"window_close") {
+            PostMessageW(window_, WM_CLOSE, 0, 0);
+        } else if (action == L"window_min") {
+            ShowWindow(window_, SW_MINIMIZE);
+        } else if (action == L"window_max") {
+            ShowWindow(window_, IsZoomed(window_) ? SW_RESTORE : SW_MAXIMIZE);
+        } else if (action == L"window_drag") {
+            ReleaseCapture();
+            SendMessageW(window_, WM_NCLBUTTONDOWN, HTCAPTION, 0);
+        } else if (action == L"init" || action == L"refresh_status") {
+            send_state_to_ui();
+            if (action == L"init" && start_in_settings_) {
+                webview_->PostWebMessageAsJson(L"{\"switch_view\":\"settings\"}");
+            }
+        } else if (action == L"refresh_location") {
+            refresh_location();
+        } else if (action == L"authorize") {
+            launch_authorizer();
+        } else if (action == L"switch_theme") {
+            const bool light = json_extract_bool(json, L"light", true);
+            switch_theme(light);
+        } else if (action == L"save") {
+            save(json);
+        }
+    }
 
-        create(L"STATIC", L"日出偏移（分钟）", 0, 20, 140, 150, 25);
-        sunrise_ = create(L"EDIT", L"0", ES_AUTOHSCROLL, 175, 136, 100, 27,
-                          id_sunrise_offset, WS_EX_CLIENTEDGE);
-        create(L"STATIC", L"日落偏移（分钟）", 0, 305, 140, 150, 25);
-        sunset_ = create(L"EDIT", L"0", ES_AUTOHSCROLL, 460, 136, 100, 27,
-                         id_sunset_offset, WS_EX_CLIENTEDGE);
-        create(L"STATIC", L"正数推迟，负数提前；范围 -120 ~ +120。", 0,
-               20, 172, 450, 22);
-
-        startup_ = create(L"BUTTON", L"登录 Windows 后自动运行", BS_AUTOCHECKBOX,
-                          20, 204, 260, 28, id_startup);
-        create(L"BUTTON", L"保存设置", BS_PUSHBUTTON, 20, 245, 105, 34, id_save);
-        refresh_button_ = create(L"BUTTON", L"刷新位置", BS_PUSHBUTTON,
-                                 135, 245, 105, 34, id_refresh_location);
-        create(L"BUTTON", L"授权定位", BS_PUSHBUTTON, 250, 245, 105, 34, id_authorize);
-        create(L"BUTTON", L"切换浅色", BS_PUSHBUTTON, 365, 245, 105, 34, id_light);
-        create(L"BUTTON", L"切换深色", BS_PUSHBUTTON, 480, 245, 105, 34, id_dark);
-
-        create(L"STATIC", L"当前状态", 0, 20, 302, 120, 25);
-        create(L"BUTTON", L"刷新状态", BS_PUSHBUTTON, 505, 294, 105, 28, id_refresh_status);
-        status_ = create(L"EDIT", L"", ES_MULTILINE | ES_READONLY | ES_AUTOVSCROLL |
-                         WS_VSCROLL, 20, 332, 590, 240, id_status, WS_EX_CLIENTEDGE);
+    void send_state_to_ui() {
+        if (!webview_) return;
 
         const Config config = load_config();
-        SendMessageW(auto_, BM_SETCHECK, config.auto_enabled ? BST_CHECKED : BST_UNCHECKED, 0);
-        SendMessageW(mode_, CB_SETCURSEL,
-                     config.location_mode == LocationMode::Manual ? 1 : 0, 0);
-        if (config.has_manual_coordinates) {
-            SetWindowTextW(latitude_, coordinate_text(config.manual_latitude).c_str());
-            SetWindowTextW(longitude_, coordinate_text(config.manual_longitude).c_str());
-        }
-        SetWindowTextW(sunrise_, std::to_wstring(config.sunrise_offset_minutes).c_str());
-        SetWindowTextW(sunset_, std::to_wstring(config.sunset_offset_minutes).c_str());
-        SendMessageW(startup_, BM_SETCHECK, startup_enabled() ? BST_CHECKED : BST_UNCHECKED, 0);
-        update_coordinate_controls();
-        update_status();
-        SetTimer(window_, 1, 3000, nullptr); // UI-only refresh; stopped when UI exits.
-    }
-
-    void update_coordinate_controls() {
-        const bool manual = SendMessageW(mode_, CB_GETCURSEL, 0, 0) == 1;
-        const bool automatic = SendMessageW(auto_, BM_GETCHECK, 0, 0) == BST_CHECKED;
-        EnableWindow(latitude_, manual);
-        EnableWindow(longitude_, manual);
-        EnableWindow(refresh_button_, !manual && automatic);
-    }
-
-    void update_status() {
         const State state = load_state();
-        const Config config = load_config();
         const ThemeValues theme = read_theme();
+        const bool startup = startup_enabled();
+        const bool running = core_running();
+
         std::wstringstream stream;
-        stream << L"后台：" << (core_running() ? L"运行中" : L"未运行") << L"\r\n";
-        stream << L"自动模式：" << (config.auto_enabled ? L"开启" : L"关闭") << L"\r\n";
-        stream << L"位置来源：" << source_name(state.active_source) << L"\r\n";
-        if (state.active_source != LocationSource::None) {
-            const double lat = config.location_mode == LocationMode::Manual
-                ? config.manual_latitude : state.latitude;
-            const double lon = config.location_mode == LocationMode::Manual
-                ? config.manual_longitude : state.longitude;
-            stream << L"经纬度：" << coordinate_text(lat) << L", " << coordinate_text(lon) << L"\r\n";
-        }
-        if (config.location_mode == LocationMode::Windows) {
-            stream << L"上次定位：" << format_local_time(state.location_utc);
-            if (state.has_location && state.accuracy_meters > 0)
-                stream << L"（精度约 " << static_cast<int>(state.accuracy_meters) << L" 米）";
-            stream << L"\r\n";
-        }
-        stream << L"下次日出：" << format_local_time(state.next_sunrise_utc) << L"\r\n";
-        stream << L"下次日落：" << format_local_time(state.next_sunset_utc) << L"\r\n";
-        stream << (config.auto_enabled ? L"下次切换：" : L"下次太阳变化：")
-               << format_local_time(state.next_switch_utc) << L"\r\n";
-        stream << L"太阳状态：" << (state.active_source == LocationSource::None
-            ? L"未知" : state.expected_light ? L"白天" : L"夜晚");
-        if (state.active_source != LocationSource::None && state.polar)
-            stream << L"（当前无日出或日落）";
-        stream << L"\r\n";
-        stream << L"Windows 主题：应用 " << (theme.apps == 1 ? L"浅色" : theme.apps == 0 ? L"深色" : L"未知")
-               << L" / 系统 " << (theme.system == 1 ? L"浅色" : theme.system == 0 ? L"深色" : L"未知") << L"\r\n";
-        if (state.override_active)
-            stream << L"手动覆盖至：" << (state.override_until_utc > 0
-                ? format_local_time(state.override_until_utc) : L"下一次太阳事件") << L"\r\n";
-        if (!state.location_error.empty()) stream << L"定位信息：" << state.location_error << L"\r\n";
-        if (!state.theme_error.empty()) stream << L"主题错误：" << state.theme_error << L"\r\n";
-        SetWindowTextW(status_, stream.str().c_str());
+        stream << std::fixed << std::setprecision(6);
+        stream << L"{"
+               << L"\"state\":{"
+               << L"\"core_running\":" << (running ? L"true" : L"false") << L","
+               << L"\"has_location\":" << (state.has_location ? L"true" : L"false") << L","
+               << L"\"active_source\":" << static_cast<int>(state.active_source) << L","
+               << L"\"source_name\":\"" << escape_json(source_name(state.active_source)) << L"\","
+               << L"\"latitude\":" << state.latitude << L","
+               << L"\"longitude\":" << state.longitude << L","
+               << L"\"accuracy_meters\":" << state.accuracy_meters << L","
+               << L"\"location_time\":\"" << escape_json(format_local_time(state.location_utc)) << L"\","
+               << L"\"next_sunrise\":\"" << escape_json(format_local_time(state.next_sunrise_utc)) << L"\","
+               << L"\"next_sunset\":\"" << escape_json(format_local_time(state.next_sunset_utc)) << L"\","
+               << L"\"next_switch\":\"" << escape_json(format_local_time(state.next_switch_utc)) << L"\","
+               << L"\"expected_light\":" << (state.expected_light ? L"true" : L"false") << L","
+               << L"\"polar\":" << (state.polar ? L"true" : L"false") << L","
+               << L"\"override_active\":" << (state.override_active ? L"true" : L"false") << L","
+               << L"\"override_until\":\"" << escape_json(state.override_until_utc > 0 ? format_local_time(state.override_until_utc) : L"") << L"\","
+               << L"\"location_error\":\"" << escape_json(state.location_error) << L"\","
+               << L"\"theme_error\":\"" << escape_json(state.theme_error) << L"\""
+               << L"},"
+               << L"\"config\":{"
+               << L"\"auto_enabled\":" << (config.auto_enabled ? L"true" : L"false") << L","
+               << L"\"location_mode\":" << static_cast<int>(config.location_mode) << L","
+               << L"\"manual_latitude\":" << config.manual_latitude << L","
+               << L"\"manual_longitude\":" << config.manual_longitude << L","
+               << L"\"has_manual_coordinates\":" << (config.has_manual_coordinates ? L"true" : L"false") << L","
+               << L"\"sunrise_offset\":" << config.sunrise_offset_minutes << L","
+               << L"\"sunset_offset\":" << config.sunset_offset_minutes
+               << L"},"
+               << L"\"theme\":{"
+               << L"\"apps\":" << theme.apps << L","
+               << L"\"system\":" << theme.system
+               << L"},"
+               << L"\"startup\":" << (startup ? L"true" : L"false")
+               << L"}";
+
+        webview_->PostWebMessageAsJson(stream.str().c_str());
     }
 
-    void save() {
+    void send_toast(const std::wstring& text, const std::wstring& type = L"info") {
+        if (!webview_) return;
+        const std::wstring json = L"{\"toast\":{\"text\":\"" + escape_json(text) + L"\",\"type\":\"" + type + L"\"}}";
+        webview_->PostWebMessageAsJson(json.c_str());
+    }
+
+    void save(const std::wstring& json) {
         Config config = load_config();
-        config.auto_enabled = SendMessageW(auto_, BM_GETCHECK, 0, 0) == BST_CHECKED;
-        config.location_mode = SendMessageW(mode_, CB_GETCURSEL, 0, 0) == 1
+        config.auto_enabled = json_extract_bool(json, L"auto_enabled", true);
+        config.location_mode = (json_extract_int(json, L"location_mode", 0) == 1)
             ? LocationMode::Manual : LocationMode::Windows;
-        const std::wstring latitude = control_text(latitude_);
-        const std::wstring longitude = control_text(longitude_);
+
+        const std::wstring latitude = json_extract_string(json, L"latitude");
+        const std::wstring longitude = json_extract_string(json, L"longitude");
         config.has_manual_coordinates = !latitude.empty() && !longitude.empty();
+
         if (config.location_mode == LocationMode::Manual && !config.has_manual_coordinates) {
+            send_toast(L"手动定位需要输入经纬度。", L"error");
             MessageBoxW(window_, L"手动定位需要输入经纬度。", L"GeoDark", MB_OK | MB_ICONWARNING);
             return;
         }
+
         if (config.has_manual_coordinates &&
             (!parse_double(latitude, config.manual_latitude) ||
              !parse_double(longitude, config.manual_longitude))) {
+            send_toast(L"经纬度格式无效。", L"error");
             MessageBoxW(window_, L"经纬度格式无效。", L"GeoDark", MB_OK | MB_ICONWARNING);
             return;
         }
-        if (!parse_offset(control_text(sunrise_), config.sunrise_offset_minutes) ||
-            !parse_offset(control_text(sunset_), config.sunset_offset_minutes)) {
+
+        const std::wstring sunrise_str = json_extract_string(json, L"sunrise_offset");
+        const std::wstring sunset_str = json_extract_string(json, L"sunset_offset");
+        if (!parse_offset(sunrise_str, config.sunrise_offset_minutes) ||
+            !parse_offset(sunset_str, config.sunset_offset_minutes)) {
+            send_toast(L"偏移必须是 -120 到 +120 之间的整数。", L"error");
             MessageBoxW(window_, L"偏移必须是 -120 到 +120 之间的整数。", L"GeoDark", MB_OK | MB_ICONWARNING);
             return;
         }
-        if (!save_config(config) || !set_startup_enabled(
-            SendMessageW(startup_, BM_GETCHECK, 0, 0) == BST_CHECKED)) {
-            MessageBoxW(window_, L"保存设置失败，请检查当前用户注册表权限。",
-                        L"GeoDark", MB_OK | MB_ICONERROR);
+
+        const bool startup = json_extract_bool(json, L"startup_enabled", false);
+        if (!save_config(config) || !set_startup_enabled(startup)) {
+            send_toast(L"保存设置失败，请检查当前用户注册表权限。", L"error");
+            MessageBoxW(window_, L"保存设置失败，请检查当前用户注册表权限。", L"GeoDark", MB_OK | MB_ICONERROR);
             return;
         }
+
         if (!launch_core()) {
+            send_toast(L"设置已保存，但后台程序启动失败。", L"warning");
             MessageBoxW(window_, L"设置已保存，但后台程序启动失败。请确认 GeoDark.exe 位于同一目录。",
                         L"GeoDark", MB_OK | MB_ICONWARNING);
         } else {
             signal_location_refresh();
         }
+
         if (config.auto_enabled && config.location_mode == LocationMode::Windows &&
-            !load_state().has_location) launch_authorizer();
-        update_status();
+            !load_state().has_location) {
+            launch_authorizer();
+        }
+
+        send_toast(L"设置已成功保存", L"success");
+        send_state_to_ui();
+    }
+
+    void refresh_location() {
+        const bool was_running = core_running();
+        if (!geodark::launch_core() || (was_running && !signal_location_refresh())) {
+            send_toast(L"后台未能接受定位请求。", L"warning");
+            MessageBoxW(window_, L"后台未能接受定位请求。", L"GeoDark", MB_OK | MB_ICONWARNING);
+        } else {
+            send_toast(L"已请求后台刷新定位", L"success");
+        }
+        send_state_to_ui();
     }
 
     void launch_authorizer() {
         const auto path = core_executable_path();
         if (reinterpret_cast<INT_PTR>(ShellExecuteW(window_, L"open", path.c_str(),
                                                      L"--authorize-location", nullptr,
-                                                     SW_SHOWNORMAL)) <= 32)
+                                                     SW_SHOWNORMAL)) <= 32) {
+            send_toast(L"无法启动定位授权窗口。", L"error");
             MessageBoxW(window_, L"无法启动定位授权窗口。", L"GeoDark", MB_OK | MB_ICONERROR);
+        }
     }
 
     void switch_theme(bool light) {
@@ -267,9 +449,13 @@ private:
                 signal_manual_override();
             }
         }
-        if (!apply_theme(light))
+        if (!apply_theme(light)) {
+            send_toast(L"切换 Windows 主题失败。", L"error");
             MessageBoxW(window_, L"切换 Windows 主题失败。", L"GeoDark", MB_OK | MB_ICONERROR);
-        update_status();
+        } else {
+            send_toast(light ? L"已切换为浅色主题" : L"已切换为深色主题", L"success");
+        }
+        send_state_to_ui();
     }
 
     static LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM wp, LPARAM lp) {
@@ -278,42 +464,56 @@ private:
             app->window_ = window;
             SetWindowLongPtrW(window, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(app));
         }
+
         auto* app = reinterpret_cast<UiApp*>(GetWindowLongPtrW(window, GWLP_USERDATA));
         if (!app) return DefWindowProcW(window, message, wp, lp);
+
         switch (message) {
-        case WM_CREATE:
-            app->create_controls();
-            return 0;
-        case WM_COMMAND:
-            if (LOWORD(wp) == id_mode && HIWORD(wp) == CBN_SELCHANGE)
-                app->update_coordinate_controls();
-            else if (LOWORD(wp) == id_auto && HIWORD(wp) == BN_CLICKED)
-                app->update_coordinate_controls();
-            else if (HIWORD(wp) == BN_CLICKED) {
-                switch (LOWORD(wp)) {
-                case id_save: app->save(); break;
-                case id_refresh_location:
-                    {
-                    const bool was_running = core_running();
-                    if (!geodark::launch_core() ||
-                        (was_running && !signal_location_refresh()))
-                        MessageBoxW(window, L"后台未能接受定位请求。", L"GeoDark", MB_OK | MB_ICONWARNING);
-                    break;
-                    }
-                case id_authorize: app->launch_authorizer(); break;
-                case id_light: app->switch_theme(true); break;
-                case id_dark: app->switch_theme(false); break;
-                case id_refresh_status: app->update_status(); break;
-                }
+        case WM_NCCALCSIZE:
+            // Remove standard window frame when wp is TRUE, keeping DWM shadow
+            if (wp == TRUE) return 0;
+            return DefWindowProcW(window, message, wp, lp);
+
+        case WM_NCHITTEST: {
+            // Resize borders for frameless window
+            POINT pt = { GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
+            ScreenToClient(window, &pt);
+            RECT rc;
+            GetClientRect(window, &rc);
+            const int border = 8;
+
+            if (pt.y < border) {
+                if (pt.x < border) return HTTOPLEFT;
+                if (pt.x >= rc.right - border) return HTTOPRIGHT;
+                return HTTOP;
+            }
+            if (pt.y >= rc.bottom - border) {
+                if (pt.x < border) return HTBOTTOMLEFT;
+                if (pt.x >= rc.right - border) return HTBOTTOMRIGHT;
+                return HTBOTTOM;
+            }
+            if (pt.x < border) return HTLEFT;
+            if (pt.x >= rc.right - border) return HTRIGHT;
+            return HTCLIENT;
+        }
+
+        case WM_SIZE:
+            if (app->controller_) {
+                RECT bounds;
+                GetClientRect(window, &bounds);
+                app->controller_->put_Bounds(bounds);
             }
             return 0;
+
         case WM_TIMER:
-            app->update_status();
+            app->send_state_to_ui();
             return 0;
+
         case WM_DESTROY:
             KillTimer(window, 1);
             PostQuitMessage(0);
             return 0;
+
         default:
             return DefWindowProcW(window, message, wp, lp);
         }
@@ -321,16 +521,10 @@ private:
 
     HINSTANCE instance_;
     HWND window_ = nullptr;
-    HFONT font_ = nullptr;
-    HWND auto_ = nullptr;
-    HWND mode_ = nullptr;
-    HWND latitude_ = nullptr;
-    HWND longitude_ = nullptr;
-    HWND sunrise_ = nullptr;
-    HWND sunset_ = nullptr;
-    HWND startup_ = nullptr;
-    HWND refresh_button_ = nullptr;
-    HWND status_ = nullptr;
+    ComPtr<ICoreWebView2Controller> controller_;
+    ComPtr<ICoreWebView2> webview_;
+    EventRegistrationToken message_token_{};
+    bool start_in_settings_ = false;
 };
 
 } // namespace
