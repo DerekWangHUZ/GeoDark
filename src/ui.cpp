@@ -163,8 +163,19 @@ public:
 
         if (!RegisterClassExW(&klass)) return 1;
 
-        const int width = 940;
-        const int height = 660;
+        UINT dpi = 96;
+        HMODULE user32_mod = GetModuleHandleW(L"user32.dll");
+        if (user32_mod) {
+            typedef UINT (WINAPI* GetDpiForSystemProc)();
+            auto get_dpi = reinterpret_cast<GetDpiForSystemProc>(GetProcAddress(user32_mod, "GetDpiForSystem"));
+            if (get_dpi) {
+                dpi = get_dpi();
+            }
+        }
+        if (dpi == 0) dpi = 96;
+
+        const int width = MulDiv(940, dpi, 96);
+        const int height = MulDiv(660, dpi, 96);
         const int screen_w = GetSystemMetrics(SM_CXSCREEN);
         const int screen_h = GetSystemMetrics(SM_CYSCREEN);
         const int x = (screen_w - width) / 2;
@@ -497,6 +508,20 @@ private:
             return HTCLIENT;
         }
 
+        case WM_DPICHANGED: {
+            const RECT* rect = reinterpret_cast<const RECT*>(lp);
+            SetWindowPos(window, nullptr,
+                         rect->left, rect->top,
+                         rect->right - rect->left, rect->bottom - rect->top,
+                         SWP_NOZORDER | SWP_NOACTIVATE);
+            if (app->controller_) {
+                RECT bounds;
+                GetClientRect(window, &bounds);
+                app->controller_->put_Bounds(bounds);
+            }
+            return 0;
+        }
+
         case WM_SIZE:
             if (app->controller_) {
                 RECT bounds;
@@ -531,6 +556,7 @@ private:
 } // namespace geodark
 
 int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show) {
+    SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
     geodark::UiApp app(instance);
     return app.run(show);
 }

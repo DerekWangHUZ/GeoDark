@@ -24,6 +24,9 @@ inline std::string get_ui_html() {
       font-synthesis: none;
       text-size-adjust: 100%;
       -webkit-text-size-adjust: 100%;
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+      text-rendering: optimizeLegibility;
       --blue: #007aff;
       --blue-dark: #0066d6;
       --surface: rgba(255, 255, 255, 0.86);
@@ -44,6 +47,7 @@ inline std::string get_ui_html() {
     svg {
       width: 18px; height: 18px; fill: none; stroke: currentColor;
       stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round;
+      shape-rendering: geometricPrecision;
     }
     .window-shell {
       height: 100%; display: flex; flex-direction: row; background: #f5f5f7; overflow: hidden;

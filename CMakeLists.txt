@@ -29,7 +29,7 @@ else()
   set(WEBVIEW2_LOADER_LIB "${webview2_nuget_SOURCE_DIR}/build/native/x64/WebView2LoaderStatic.lib")
 endif()
 
-set(GEODARK_RESOURCES resources/geodark.rc)
+set(GEODARK_RESOURCES resources/geodark.rc resources/geodark.manifest)
 
 add_library(geodark_solar STATIC src/solar.cpp src/policy.cpp)
 target_include_directories(geodark_solar PUBLIC src)
