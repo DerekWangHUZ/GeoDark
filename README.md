@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <a href="https://gitlab.com/DerekWangHUZ/GeoDark/-/releases"><img src="https://img.shields.io/badge/release-v0.2.0-blue.svg" alt="Release v0.2.0" /></a>
+  <a href="https://gitlab.com/DerekWangHUZ/GeoDark/-/releases"><img src="https://img.shields.io/badge/release-v0.3.0-blue.svg" alt="Release v0.3.0" /></a>
   <a href="#"><img src="https://img.shields.io/badge/platform-Windows%2011%20x64-0078d4.svg" alt="Platform Windows 11" /></a>
 </p>
 
@@ -47,7 +47,7 @@ GeoDark 是一款专为 Windows 11（兼容 Windows 10 x64）打造的低功耗�
 
 ## 下载与运行
 
-从 [GitLab Releases](https://gitlab.com/DerekWangHUZ/GeoDark/-/releases) 下载最新发行包 `GeoDark-0.2.0-win11-x64.zip`。
+从 [GitLab Releases](https://gitlab.com/DerekWangHUZ/GeoDark/-/releases) 下载最新发行包 `GeoDark-0.3.0-win11-x64.zip`。
 
 ### 系统运行要求
 
@@ -130,6 +130,16 @@ ctest --test-dir build -C Release --output-on-failure
 编译产物：
 - `build\Release\GeoDark.exe`（后台静默服务）
 - `build\Release\GeoDarkUI.exe`（现代化配置界面）
+
+### 代码签名（可选，消除启动安全警告）
+
+Windows 对“带网络下载标记（MotW）+ 未签名”的程序会弹出“打开文件 - 安全警告”。本机开发者可用自带脚本一键签发自建证书并安装信任（首次需要管理员权限）：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File tools\sign.ps1 -Dist -Unblock -InstallMachineTrust
+```
+
+每次重新构建后 exe 会恢复未签名状态，重新运行该脚本（不带 `-InstallMachineTrust` 亦可）即可。详细说明与手动解除方法见 [常见问题第 7 条](docs/TROUBLESHOOTING.md#7-启动时弹出打开文件---安全警告无法验证发布者)。
 
 ### 性能测量
 
