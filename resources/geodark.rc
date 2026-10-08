@@ -5,8 +5,8 @@
 IDI_APP_ICON ICON "../assets/geodark.ico"
 
 1 VERSIONINFO
-FILEVERSION 0,1,0,0
-PRODUCTVERSION 0,1,0,0
+FILEVERSION 0,3,0,0
+PRODUCTVERSION 0,3,0,0
 FILEFLAGSMASK 0x3fL
 #ifdef _DEBUG
 FILEFLAGS 0x1L
@@ -23,12 +23,12 @@ BEGIN
         BEGIN
             VALUE "CompanyName", "Derek Wang"
             VALUE "FileDescription", "GeoDark Windows 11 Auto Day/Night Theme Switcher"
-            VALUE "FileVersion", "0.1.0.0"
+            VALUE "FileVersion", "0.3.0.0"
             VALUE "InternalName", "GeoDark"
             VALUE "LegalCopyright", "Copyright (C) 2026 Derek Wang"
             VALUE "OriginalFilename", "GeoDark.exe"
             VALUE "ProductName", "GeoDark"
-            VALUE "ProductVersion", "0.1.0.0"
+            VALUE "ProductVersion", "0.3.0.0"
         END
     END
     BLOCK "VarFileInfo"

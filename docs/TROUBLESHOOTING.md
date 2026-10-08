@@ -88,9 +88,42 @@ Windows 11 在主题切换时会向全局广播 `WM_SETTINGCHANGE` 消息。
 - **Windows 10 / Windows Server**：若未安装过新版 Microsoft Edge，请前往微软官网下载安装 **Microsoft Edge WebView2 Evergreen 独立安装程序**。
 - 注：后台守护程序 `GeoDark.exe` 仅使用 Win32 原生 API，**完全不依赖** WebView2 运行时。
 
+## 7. 启动时弹出“打开文件 - 安全警告”（无法验证发布者）
+
+### 现象
+- 双击或开机自启 `GeoDark.exe` / `GeoDarkUI.exe` 时，弹出“打开文件 - 安全警告”对话框，提示“无法验证发布者。你确定要运行此软件吗？”。
+
+### 原因
+Windows 附件管理器（Attachment Manager）对同时满足以下两个条件的程序弹出该警告：
+1. 文件带有 **Mark of the Web（MotW，`Zone.Identifier` 数据流）**——凡是从网络下载、网盘同步、浏览器解压或跨机复制得到的文件都会带上；
+2. 文件**未经数字签名**，或签名证书不受本机信任。
+
+GeoDark 官方发行包当前未做商业代码签名，因此带 MotW 的副本每次启动都会触发提示。
+
+### 解决方法
+任选其一：
+
+- **方法 A（本机开发者，推荐）**：使用仓库自带的签名脚本，为本机构建产物签发自建证书并安装本机信任：
+  ```powershell
+  # 首次运行（在仓库根目录）：签名 + 安装用户级信任，本机信任需在 UAC 弹窗点“是”
+  powershell -NoProfile -ExecutionPolicy Bypass -File tools\sign.ps1 -InstallMachineTrust
+  # 之后每次重新构建后重新签名（无需再次提权）：
+  powershell -NoProfile -ExecutionPolicy Bypass -File tools\sign.ps1
+  ```
+  脚本会自动创建 `CN=GeoDark (Derek Wang)` 代码签名证书（5 年有效期，存于当前用户证书区），导入本机 `Root` 与 `TrustedPublisher` 信任区，并用 Windows SDK 的 signtool 签名 `build\Release` 下的全部 exe。加 `-Dist` 可一并签名 `dist\` 发行副本，加 `-Unblock` 可清除仓库内残留的 MotW 标记。
+  注意：证书仅对当前 Windows 账户与本机生效；其他用户或其他机器仍会看到提示（属正常安全行为）。
+
+- **方法 B（单文件临时解除）**：右键 exe → **属性** → 勾选 **“解除锁定”** → 确定；或用 PowerShell：
+  ```powershell
+  Unblock-File -LiteralPath "C:\path\to\GeoDark.exe"
+  ```
+  缺点：重新下载、解压或构建覆盖后 MotW 会再次出现，弹窗复发。
+
+- **方法 C（组策略，不推荐普通用户）**：将 `.exe` 加入 `HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Associations` 的 `LowRiskFileTypes`。这会全局放行所有 exe 的该检查，安全面过大，仅在完全理解后果时使用。
+
 ---
 
-## 7. 性能与内存诊断
+## 8. 性能与内存诊断
 
 GeoDark 设计目标为极限静默与超低开销。若需检验当前后台进程的实际性能指标，可在项目目录中运行内置测试脚本：
 
