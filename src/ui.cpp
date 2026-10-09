@@ -142,6 +142,48 @@ std::wstring get_webview_user_data_path() {
     return L"";
 }
 
+std::wstring format_hresult(HRESULT hr) {
+    wchar_t buf[32];
+    swprintf_s(buf, L"0x%08X", static_cast<unsigned int>(hr));
+    return buf;
+}
+
+// 轻量诊断日志：%LOCALAPPDATA%\GeoDark\ui.log（UTF-16 追加写）。
+// 用于排查 WebView2 初始化失败等“无窗口可看”的问题。
+void append_ui_log(const std::wstring& line) {
+    PWSTR local_app_data = nullptr;
+    if (FAILED(SHGetKnownFolderPath(FOLDERID_LocalAppData, 0, nullptr, &local_app_data)) ||
+        !local_app_data) return;
+    std::wstring dir = local_app_data;
+    CoTaskMemFree(local_app_data);
+    dir += L"\\GeoDark";
+    CreateDirectoryW(dir.c_str(), nullptr);
+    const std::wstring path = dir + L"\\ui.log";
+    HANDLE file = CreateFileW(path.c_str(), FILE_APPEND_DATA, FILE_SHARE_READ | FILE_SHARE_WRITE,
+                              nullptr, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (file == INVALID_HANDLE_VALUE) return;
+    SYSTEMTIME st{};
+    GetLocalTime(&st);
+    wchar_t stamp[48];
+    swprintf_s(stamp, L"[%04u-%02u-%02u %02u:%02u:%02u.%03u] ", st.wYear, st.wMonth, st.wDay,
+               st.wHour, st.wMinute, st.wSecond, st.wMilliseconds);
+    const std::wstring full = std::wstring(stamp) + line + L"\r\n";
+    DWORD written = 0;
+    WriteFile(file, full.c_str(), static_cast<DWORD>(full.size() * sizeof(wchar_t)), &written, nullptr);
+    CloseHandle(file);
+}
+
+// WebView2 用户数据目录自愈：整体改名保留现场（.corrupt-<tick>），
+// 让下一次初始化在全新目录上进行。
+bool reset_webview_user_data() {
+    const std::wstring root = get_webview_user_data_path();
+    if (root.empty()) return false;
+    wchar_t tick[24];
+    swprintf_s(tick, L"%llu", static_cast<unsigned long long>(GetTickCount64()));
+    const std::wstring backup = root + L".corrupt-" + tick;
+    return MoveFileExW(root.c_str(), backup.c_str(), MOVEFILE_WRITE_THROUGH) != FALSE;
+}
+
 class UiApp {
 public:
     explicit UiApp(HINSTANCE instance) : instance_(instance) {
@@ -201,7 +243,7 @@ public:
         BOOL dark = TRUE;
         DwmSetWindowAttribute(window_, 20 /* DWMWA_USE_IMMERSIVE_DARK_MODE */, &dark, sizeof(dark));
 
-        init_webview();
+        init_webview(0);
 
         ShowWindow(window_, show);
         UpdateWindow(window_);
@@ -217,7 +259,10 @@ public:
     }
 
 private:
-    void init_webview() {
+    void init_webview(int attempt) {
+        webview_attempt_ = attempt;
+        append_ui_log(std::wstring(L"WebView2 environment init, attempt ") +
+                      std::to_wstring(attempt));
         const std::wstring user_data = get_webview_user_data_path();
 
         CreateCoreWebView2EnvironmentWithOptions(
@@ -226,15 +271,24 @@ private:
             nullptr,
             Callback<ICoreWebView2CreateCoreWebView2EnvironmentCompletedHandler>(
                 [this](HRESULT hr, ICoreWebView2Environment* env) -> HRESULT {
-                    if (FAILED(hr) || !env) return hr;
+                    if (FAILED(hr) || !env) {
+                        on_webview_init_failed(L"环境创建", hr);
+                        return hr;
+                    }
                     env->CreateCoreWebView2Controller(
                         window_,
                         Callback<ICoreWebView2CreateCoreWebView2ControllerCompletedHandler>(
                             [this](HRESULT res, ICoreWebView2Controller* controller) -> HRESULT {
-                                if (FAILED(res) || !controller) return res;
+                                if (FAILED(res) || !controller) {
+                                    on_webview_init_failed(L"控制器创建", res);
+                                    return res;
+                                }
                                 controller_ = controller;
                                 controller_->get_CoreWebView2(&webview_);
-                                if (!webview_) return E_FAIL;
+                                if (!webview_) {
+                                    on_webview_init_failed(L"WebView 对象获取", E_FAIL);
+                                    return E_FAIL;
+                                }
 
                                 RECT bounds;
                                 GetClientRect(window_, &bounds);
@@ -270,10 +324,35 @@ private:
 
                                 send_state_to_ui();
                                 SetTimer(window_, 1, 3000, nullptr);
+                                webview_ready_ = true;
+                                append_ui_log(L"WebView2 ready");
                                 return S_OK;
                             }).Get());
                     return S_OK;
                 }).Get());
+    }
+
+    // WebView2 初始化任一环节失败时的统一处理：
+    // 第一次失败 -> 重置用户数据目录（怀疑配置损坏）后自动重试一次；
+    // 重试仍失败 -> 弹出带错误码的说明框并退出，绝不留下一片空白的窗口。
+    void on_webview_init_failed(const wchar_t* stage, HRESULT hr) {
+        append_ui_log(std::wstring(L"WebView2 ") + stage + L" failed: " + format_hresult(hr));
+        if (webview_attempt_ == 0) {
+            append_ui_log(L"resetting WebView2 user data folder and retrying");
+            reset_webview_user_data();
+            init_webview(1);
+            return;
+        }
+        const std::wstring message =
+            std::wstring(L"GeoDark 设置界面初始化失败（WebView2 ") + stage +
+            L"，错误码 " + format_hresult(hr) + L"）。\n\n"
+            L"程序已自动重置 WebView2 用户数据目录并重试一次，仍未成功。常见原因：\n"
+            L"1. WebView2 运行时缺失或损坏 —— 重新安装 Microsoft Edge WebView2 运行时；\n"
+            L"2. 安全软件限制了本程序 —— 将 GeoDark 加入信任列表；\n"
+            L"3. 程序所在路径被系统判定为不可信 —— 使用 tools\\install.ps1 安装到用户程序目录后从那里运行。\n\n"
+            L"详细日志：%LOCALAPPDATA%\\GeoDark\\ui.log";
+        MessageBoxW(window_, message.c_str(), L"GeoDark", MB_OK | MB_ICONERROR);
+        PostQuitMessage(2);
     }
 
     void handle_web_message(const std::wstring& json) {
@@ -536,6 +615,7 @@ private:
 
         case WM_DESTROY:
             KillTimer(window, 1);
+            if (app->controller_) app->controller_->Close();
             PostQuitMessage(0);
             return 0;
 
@@ -550,6 +630,8 @@ private:
     ComPtr<ICoreWebView2> webview_;
     EventRegistrationToken message_token_{};
     bool start_in_settings_ = false;
+    bool webview_ready_ = false;
+    int webview_attempt_ = 0;
 };
 
 } // namespace
