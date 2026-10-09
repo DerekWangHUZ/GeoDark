@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <a href="https://gitlab.com/DerekWangHUZ/GeoDark/-/releases"><img src="https://img.shields.io/badge/release-v0.3.0-blue.svg" alt="Release v0.3.0" /></a>
+  <a href="https://gitlab.com/DerekWangHUZ/GeoDark/-/releases"><img src="https://img.shields.io/badge/release-v0.3.1-blue.svg" alt="Release v0.3.1" /></a>
   <a href="#"><img src="https://img.shields.io/badge/platform-Windows%2011%20x64-0078d4.svg" alt="Platform Windows 11" /></a>
 </p>
 
@@ -47,7 +47,7 @@ GeoDark 是一款专为 Windows 11（兼容 Windows 10 x64）打造的低功耗�
 
 ## 下载与运行
 
-从 [GitLab Releases](https://gitlab.com/DerekWangHUZ/GeoDark/-/releases) 下载最新发行包 `GeoDark-0.3.0-win11-x64.zip`。
+从 [GitLab Releases](https://gitlab.com/DerekWangHUZ/GeoDark/-/releases) 下载最新发行包 `GeoDark-0.3.1-win11-x64.zip`。
 
 ### 系统运行要求
 
@@ -140,6 +140,16 @@ powershell -NoProfile -ExecutionPolicy Bypass -File tools\sign.ps1 -Dist -Unbloc
 ```
 
 每次重新构建后 exe 会恢复未签名状态，重新运行该脚本（不带 `-InstallMachineTrust` 亦可）即可。详细说明与手动解除方法见 [常见问题第 7 条](docs/TROUBLESHOOTING.md#7-启动时弹出打开文件---安全警告无法验证发布者)。
+
+### 安装到用户目录（推荐）
+
+开发仓库路径（`...\source\repos\GeoDark\`）可能被系统路径级安全判定标记为 Internet 区域：从这里直接运行会弹出“打开文件 - 安全警告”，`GeoDarkUI.exe` 也会因 WebView2 无法初始化而白屏（实测复现，详见 [常见问题第 9 条](docs/TROUBLESHOOTING.md#9-geodarkui-启动后窗口一片空白白屏)）。构建并签名后请用安装脚本把程序装入用户程序目录，并从那里运行：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File tools\install.ps1
+```
+
+脚本会将 exe 安装到 `%LOCALAPPDATA%\Programs\GeoDark`、解除锁定、校验签名、把开机自启指向安装目录并启动守护进程。日常使用时让桌面/开始菜单快捷方式指向安装目录的 `GeoDarkUI.exe` 即可。
 
 ### 性能测量
 

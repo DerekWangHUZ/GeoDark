@@ -2,7 +2,27 @@
 
 本项目遵循语义化版本规范。所有重要更新与问题修复均记录于此。
 
-## [0.3.0] - 2026-10-09
+## [0.3.1] - 2026-10-09
+
+### 修复
+
+- **彻底排查并修复“开机自启弹窗”与“GeoDarkUI 白屏”**：
+  - 根因一（已确证）：仓库目录带有 **`Low Mandatory Level`（低完整性）NTFS 标签**（目录 ACL 中含非本机 SID 的显式 ACE，系整目录连同 ACL 从其他机器复制/恢复时带入，标签经 (OI)(CI) 继承到全部新建文件）——Windows 将低完整性内容一律按 Internet 区处理：附件管理器弹“打开文件 - 安全警告”，WebView2 加载器在该路径下无法创建浏览器进程（UI 必现白屏）。因果验证：给空目录打同样标签 → 同一 exe 立即 zone=3；标签提回 Medium → 立即恢复 zone=0 且 WebView2 正常。签名、机器信任、`Unblock-File`、杀软排除项/信任组/暂停保护均无效（标记在 NTFS SACL 上，不在文件内容或 `Zone.Identifier` 里）。卡巴斯基 2026-09-30 的 `VHO:Trojan.Win32.Khalesi.gen` 行为误报（`detects.db` 可查）为低完整性上下文引发的次生噪声，非根因。修复：`icacls <仓库目录> /setintegritylevel (OI)(CI)M`（详见 docs/TROUBLESHOOTING.md 第 9 条）。
+  - 根因二：`ui.cpp` 将 WebView2 初始化失败完全静默，任何初始化错误（含用户数据目录损坏）都表现为白屏。
+  - 修复措施：
+    - 新增 `tools\install.ps1`：安装到 `%LOCALAPPDATA%\Programs\GeoDark`、解除锁定、校验签名、把开机自启（HKCU Run）指向安装目录并启动守护进程；
+    - `ui.cpp`：初始化各环节失败时写入 `%LOCALAPPDATA%\GeoDark\ui.log`；首次失败自动重置 WebView2 用户数据目录（改名保留现场）并重试一次；仍失败弹出带错误码的说明框——不再静默白屏；窗口销毁时调用 `controller_->Close()`，避免遗留 msedgewebview2 孤儿进程；
+    - 新增 `tools\diag-zone.ps1`：一键检测任意路径被判定为何种安全区域；
+    - 新增 `tools\run.ps1`：构建后一键镜像到干净路径并启动，开发测试不受路径判定影响（支持 `-Build` / `-Daemon` / `-Verify`）；
+    - `docs/TROUBLESHOOTING.md` 新增第 9 节“白屏”，并在第 7 节补充路径级判定说明。
+
+### 变更
+
+- 版本号 0.3.0 → 0.3.1（CMake / 资源 / 清单同步）。
+
+## [0.3.0] - 2026-10-09（已撤回，由 0.3.1 取代）
+
+> 注：0.3.0 发行版已撤回。其全部变更（签名工具与版本号）已包含在 0.3.1 中，并附带上述弹窗/白屏修复。
 
 ### 新增
 
