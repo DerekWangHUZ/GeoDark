@@ -4,6 +4,10 @@
 
 namespace geodark {
 
+// 本文件为单 HTML 内嵌 UI（HTML+CSS+JS raw string），经 WebView2 NavigateToString
+// 加载。材质 token 来源 macUI-SolidGlass 模板本机副本，复制日期 2026-11-22。
+// 桥协议不变：JS→C++ postMessage({action})；C++→JS PostWebMessageAsJson
+// （state/config/theme/toast/switch_view）。
 inline std::string get_ui_html() {
     std::string html;
     html.reserve(32768);
@@ -15,11 +19,42 @@ inline std::string get_ui_html() {
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>GeoDark 设置</title>
+  <script>
+    // 主题初始回退：仅当宿主未推送 theme 消息时以 prefers-color-scheme 定起点；
+    // 之后一律以 C++ 推送的 theme.apps 为准（applyThemeClass）。
+    (function () {
+      var dark = false;
+      try { dark = window.matchMedia("(prefers-color-scheme: dark)").matches; } catch (e) { dark = false; }
+      if (dark) document.documentElement.classList.add("dark");
+    })();
+  </script>
   <style>
+    /* ====================================================================
+       Solid Glass —— GeoDark 内嵌 UI 材质
+       （材质 token 来源 macUI-SolidGlass 模板本机副本，复制日期 2026-11-22）
+
+       Solid Glass 介于平面设计与液态玻璃之间：每一块面都是一块厚实的烟玻璃，
+       透出极少——远看是实心，近看才是玻璃。让它是玻璃的，全在边缘：
+       顶上一线光（rim）、四周一根发丝线（hairline）、底下收拢的阴影（shadow）。
+       面本身是中性灰：不取背后之色，不折光，不流动。
+
+       四条材质规则（本文件全部遵循）：
+         1. 收光在边缘。     rim + hairline + shadow，面上永无渐变。
+         2. 厚重，不空灵。   中性灰；模糊只柔化背后之物，不增其色。
+         3. 深度即厚度。     panel（最薄）< card < popover（最厚），
+                             越厚越不透明。
+         4. 状态唯一。       悬停、选中、按住展开，都穿同一小块透明玻璃
+                             （glass-state），无第二种选中样式。
+
+       主题机制：显式 .dark class 优先。C++ 每次状态消息都带
+       theme.apps（0=深色 1=浅色），JS 据此切换 html 的 .dark class；
+       prefers-color-scheme 仅作宿主消息到达前的初始回退。
+       ==================================================================== */
     :root {
-      font-family: Inter, "SF Pro Display", "Segoe UI", system-ui, -apple-system, sans-serif;
+      color-scheme: light;
+      font-family: Inter, "SF Pro Display", "Segoe UI Variable Display", "Segoe UI", system-ui, -apple-system, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
       font-optical-sizing: auto;
-      color: #1d1d1f;
+      color: var(--foreground);
       background: transparent;
       font-synthesis: none;
       text-size-adjust: 100%;
@@ -27,20 +62,191 @@ inline std::string get_ui_html() {
       -webkit-font-smoothing: antialiased;
       -moz-osx-font-smoothing: grayscale;
       text-rendering: optimizeLegibility;
-      --blue: #007aff;
-      --blue-dark: #0066d6;
-      --surface: rgba(255, 255, 255, 0.86);
-      --border: rgba(0, 0, 0, 0.09);
-      --muted: #6e6e73;
-      --sidebar: rgba(239, 239, 242, 0.88);
+
+      /* ---- 面板几何 ---- */
+      --radius: 12px;
+      --radius-control: 9px;
+
+      /* ---- 色彩（oklch token，映射自模板 :root / .dark）----
+         surface  ← card        sidebar ← sidebar
+         border   ← border      muted   ← muted-foreground
+         blue     ← brand/primary 的功能色替代（GeoDark 业务色）*/
+      --background: oklch(0.925 0.007 265);
+      --foreground: oklch(0.16 0 0);
+
+      /* 厚度三档：panel < card < popover。 */
+      --panel: oklch(0.975 0.004 265 / 44%);
+      --card: oklch(0.98 0.004 265 / 60%);
+      --popover: oklch(0.985 0.003 265 / 96%);
+
+      --secondary: oklch(0.3 0.02 265 / 9%);
+      --muted: oklch(0.47 0 0);
+      --border: oklch(0.3 0.02 265 / 13%);
+      --input-line: oklch(0.3 0.02 265 / 15%);
+      --ring: oklch(0.7 0 0);
+      --blue: oklch(0.55 0.19 257);
+      --blue-dark: oklch(0.47 0.17 257);
+
+      /* 边缘收光三件套。rim：顶缘一线光；inner：其内一根更弱的第二线；
+         edge：四周发丝线；shade：底下阴影；contact/lift：贴地与抬升两层。 */
+      --glass-rim: oklch(1 0 0 / 90%);
+      --glass-inner: oklch(1 0 0 / 35%);
+      --glass-edge: oklch(0.38 0.03 265 / 10%);
+      --popover-edge: oklch(0.38 0.03 265 / 22%);
+      --popover-under: oklch(0.38 0.03 265 / 16%);
+      --glass-shade: oklch(0.3 0.06 265 / 28%);
+      --glass-contact: oklch(0.25 0.03 265 / 6%);
+      --glass-lift: oklch(0.25 0.03 265 / 14%);
+
+      /* 小件与「唯一状态」用的透明玻璃。 */
+      --glass-control: oklch(1 0 0 / 55%);
+      --glass-control-rim: oklch(1 0 0 / 80%);
+      --glass-state: oklch(0.3 0.02 265 / 9%);
+      --glass-state-rim: oklch(1 0 0 / 85%);
+      --glass-state-edge: oklch(0.3 0.02 265 / 13%);
+      --hover: oklch(0.3 0.02 265 / 10%);
+      --hover-faint: oklch(0.3 0.02 265 / 5.5%);
+
+      /* 主按钮：墨色的实心玻璃板。 */
+      --primary-solid: 88%;
+      --primary-rim: oklch(1 0 0 / 30%);
+      --primary-under: oklch(0 0 0 / 45%);
+      --primary-inner: oklch(1 0 0 / 7%);
+      --primary-edge: oklch(0.2 0 0 / 30%);
+
+      /* 输入域：一块可敲字的透明玻璃。 */
+      --field: oklch(1 0 0 / 60%);
+      --field-rim: oklch(1 0 0);
+      --field-edge: oklch(0.3 0.02 265 / 14%);
+      --focus-line: oklch(0.2 0 0 / 50%);
+
+      /* 凹槽（开关槽/未勾选）：光从反方向落。 */
+      --well-shade: oklch(0.3 0.06 265 / 14%);
+      --well-rim: oklch(1 0 0 / 85%);
+
+      /* 旋钮：最亮的一块板。 */
+      --knob: oklch(1 0 0);
+      --knob-shade: oklch(0.3 0.06 265 / 30%);
+
+      --glass-blur: blur(26px) saturate(180%);
+      --glass-blur-control: blur(14px);
+
+      /* 玻璃之下的三处环境光（浅色页才有；深色一律透明）。 */
+      --light-1: oklch(0.68 0.13 165 / 7%);
+      --light-2: oklch(0.75 0.08 240 / 11%);
+      --light-3: oklch(0.68 0.13 165 / 4%);
+
+      /* 业务功能色（GeoDark：太阳/月亮/状态）。 */
+      --sun: oklch(0.75 0.15 75);
+      --moon: oklch(0.58 0.16 285);
+      --success: oklch(0.58 0.15 152);
+      --warn: oklch(0.66 0.16 58);
+      --danger: oklch(0.577 0.245 27.325);
+      --log-fg: oklch(0.85 0 0);
+      --log-dim: oklch(0.52 0 0);
+      --log-bg: oklch(0.18 0.005 265);
+
+      /* 兼容旧变量名（内联 style 引用）：surface 旧名 → card 面。 */
+      --surface: var(--card);
+      --sidebar: oklch(0.975 0.004 265 / 44%);
+      --sidebar-foreground: oklch(0.25 0 0);
     }
+
+    /* ---- 深色：材质本来的样子 ------------------------------------------
+       平匀无光的页面，玻璃转为烟色。文字近白。 */
+    .dark {
+      color-scheme: dark;
+
+      --background: oklch(0.16 0 0);
+      --foreground: oklch(0.985 0 0);
+
+      --panel: oklch(1 0 0 / 4.5%);
+      --card: oklch(0.31 0 0 / 46%);
+      --popover: oklch(0.22 0 0 / 96%);
+
+      --secondary: oklch(1 0 0 / 10%);
+      --muted: oklch(0.72 0 0);
+      --border: oklch(1 0 0 / 11%);
+      --input-line: oklch(1 0 0 / 13%);
+      --ring: oklch(0.52 0 0);
+      --blue: oklch(0.76 0.12 250);
+      --blue-dark: oklch(0.72 0.14 250);
+
+      --glass-rim: oklch(1 0 0 / 16%);
+      --glass-inner: oklch(1 0 0 / 4%);
+      --glass-edge: oklch(1 0 0 / 6%);
+      --popover-edge: var(--glass-edge);
+      --popover-under: oklch(0 0 0 / 0%);
+      --glass-shade: oklch(0 0 0 / 60%);
+      --glass-contact: oklch(0 0 0 / 10%);
+      --glass-lift: oklch(0 0 0 / 22%);
+
+      --glass-control: oklch(1 0 0 / 7%);
+      --glass-control-rim: oklch(1 0 0 / 11%);
+      --glass-state: var(--glass-control);
+      --glass-state-rim: var(--glass-control-rim);
+      --glass-state-edge: var(--glass-edge);
+      --hover: oklch(1 0 0 / 8%);
+      --hover-faint: oklch(1 0 0 / 4%);
+
+      --primary-solid: 86%;
+      --primary-rim: oklch(1 0 0);
+      --primary-under: oklch(0 0 0 / 22%);
+      --primary-inner: oklch(0 0 0 / 7%);
+      --primary-edge: oklch(1 0 0 / 26%);
+
+      --field: oklch(1 0 0 / 6%);
+      --field-rim: oklch(1 0 0 / 15%);
+      --field-edge: oklch(1 0 0 / 8%);
+      --focus-line: oklch(1 0 0 / 40%);
+
+      --well-shade: oklch(0 0 0 / 38%);
+      --well-rim: oklch(1 0 0 / 9%);
+
+      --knob: oklch(0.97 0 0);
+      --knob-shade: oklch(0 0 0 / 55%);
+
+      --glass-blur: blur(26px);
+
+      --light-1: transparent;
+      --light-2: transparent;
+      --light-3: transparent;
+
+      --sun: oklch(0.8 0.14 75);
+      --moon: oklch(0.72 0.14 285);
+      --success: oklch(0.74 0.16 152);
+      --warn: oklch(0.77 0.15 62);
+      --danger: oklch(0.704 0.191 22.216);
+      --log-fg: oklch(0.85 0 0);
+      --log-dim: oklch(0.52 0 0);
+      --log-bg: oklch(0.14 0.005 265);
+
+      --surface: var(--card);
+      --sidebar: oklch(0.11 0 0 / 50%);
+      --sidebar-foreground: oklch(0.9 0 0);
+    }
+
+    /* 兼容旧内联样式里的硬编码深浅色覆盖：由 token 接管，不再需要。
+       )raw";
+
+    html += R"raw(（保留选择器本身为空会拖慢解析，直接删除。） */
+
     * { box-sizing: border-box; user-select: none; }
     ::-webkit-scrollbar { width: 7px; height: 7px; }
     ::-webkit-scrollbar-track { background: transparent; }
-    ::-webkit-scrollbar-thumb { background: rgba(128, 128, 136, 0.28); border-radius: 4px; }
-    ::-webkit-scrollbar-thumb:hover { background: rgba(128, 128, 136, 0.48); }
+    ::-webkit-scrollbar-thumb { background: color-mix(in oklch, var(--foreground) 26%, transparent); border-radius: 4px; }
+    ::-webkit-scrollbar-thumb:hover { background: color-mix(in oklch, var(--foreground) 44%, transparent); }
     html, body, #app {
       margin: 0; width: 100%; height: 100%; overflow: hidden;
+    }
+    body {
+      background-color: var(--background);
+      background-image:
+        radial-gradient(62rem 42rem at 12% -6rem, var(--light-1), transparent 62%),
+        radial-gradient(52rem 38rem at 92% 4rem, var(--light-2), transparent 60%),
+        radial-gradient(64rem 46rem at 55% 110%, var(--light-3), transparent 62%);
+      background-repeat: no-repeat;
+      background-attachment: fixed;
     }
     button, input, select { font: inherit; }
     button { color: inherit; }
@@ -49,19 +255,31 @@ inline std::string get_ui_html() {
       stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round;
       shape-rendering: geometricPrecision;
     }
+
+    /* ---- 材质底座 -------------------------------------------------------
+       窗壳让出背景：环境光铺在 body 上，玻璃面直接立于其上。 */
     .window-shell {
-      height: 100%; display: flex; flex-direction: row; background: #f5f5f7; overflow: hidden;
+      height: 100%; display: flex; flex-direction: row; background: transparent; overflow: hidden;
     }
     .main-area {
       position: relative; min-width: 0; min-height: 0; flex: 1; display: flex; flex-direction: column; overflow: hidden;
     }
+
+    /* 侧栏：立在边缘上的一块板，光落在面向页面的一侧。
+       「面板」厚度档（最薄）。 */
     .sidebar {
       width: 224px; height: 100%; flex: 0 0 224px; padding: 0 13px 16px;
-      background: var(--sidebar); border-right: 1px solid var(--border); display: flex; flex-direction: column;
+      background: var(--sidebar); display: flex; flex-direction: column;
+      -webkit-backdrop-filter: var(--glass-blur); backdrop-filter: var(--glass-blur);
+      box-shadow:
+        inset -1px 0 0 var(--glass-edge),
+        inset 0 1px 0 var(--glass-inner);
     }
     .sidebar-chrome {
       height: 52px; flex: 0 0 52px; margin: 0 -13px; padding: 0 16px; display: flex; align-items: center; cursor: default;
     }
+
+    /* 红黄绿窗控：三颗小灯，最小的实心玻璃件（行为消息原样保留）。 */
     .traffic { display: flex; gap: 8px; align-items: center; }
     .light {
       position: relative; width: 13px; height: 13px; display: grid; place-items: center;
@@ -83,186 +301,304 @@ inline std::string get_ui_html() {
     .traffic:hover .light::before { opacity: 1; }
     .light:hover { filter: brightness(0.96); }
     .light:active { filter: brightness(0.88); transform: scale(0.9); }
+
     .sidebar-identity { display: grid; gap: 10px; padding: 2px 10px 22px; cursor: default; }
     .title { display: flex; align-items: center; gap: 9px; font-size: 14px; font-weight: 650; letter-spacing: -0.01em; }
+
+    /* 品牌墨块：主按钮那块实心板，缩到一枚图标的大小。 */
     .title-mark {
-      display: flex; align-items: center; justify-content: center; width: 24px; height: 24px; border-radius: 6px;
-      background: linear-gradient(135deg, #ff9500 0%, #007aff 100%); color: white; box-shadow: 0 2px 6px rgba(0, 122, 255, 0.25);
+      display: flex; align-items: center; justify-content: center; width: 24px; height: 24px; border-radius: 28%;
+      background: linear-gradient(135deg, oklch(0.75 0.15 75), oklch(0.55 0.19 257)); color: white;
+      box-shadow:
+        inset 0 1px 0 var(--primary-rim),
+        inset 0 -1px 0 var(--primary-under),
+        0 1px 2px var(--glass-contact);
     }
     .title-mark svg { width: 15px; height: 15px; stroke-width: 2.2; }
+
+    /* 环境 pill：一块透明玻璃小件。 */
     .env-pill {
       width: 100%; min-width: 0; display: flex; align-items: center; gap: 7px; padding: 5px 8px; border-radius: 7px;
-      background: rgba(0, 0, 0, 0.045); color: var(--muted); font-size: 11px; font-weight: 600;
+      background: var(--glass-control); color: var(--muted); font-size: 11px; font-weight: 600;
+      box-shadow:
+        inset 0 1px 0 var(--glass-control-rim),
+        inset 0 0 0 1px var(--glass-edge);
     }
     .env-pill span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .env-pill i {
-      width: 7px; height: 7px; border-radius: 50%; background: #ff453a;
-      box-shadow: 0 0 0 3px rgba(255, 69, 58, 0.15); flex: 0 0 auto;
+      width: 7px; height: 7px; border-radius: 50%; background: var(--danger);
+      box-shadow: 0 0 0 3px color-mix(in oklch, var(--danger) 15%, transparent); flex: 0 0 auto;
     }
-    .env-pill.ok i { background: #30b859; box-shadow: 0 0 0 3px rgba(48, 184, 89, 0.15); }
+    .env-pill.ok i { background: var(--success); box-shadow: 0 0 0 3px color-mix(in oklch, var(--success) 15%, transparent); }
+
     .sidebar-label {
-      margin: 0 10px 8px; color: #8a8a8e; font-size: 11px; font-weight: 650; text-transform: uppercase; letter-spacing: 0.04em;
+      margin: 0 10px 8px; color: var(--muted); font-size: 11px; font-weight: 650; text-transform: uppercase; letter-spacing: 0.04em;
     }
     .settings-label { margin-top: 25px; }
+
+    /* 侧栏导航项：唯一状态 glass-state 的主场。 */
     .nav {
-      width: 100%; border: 0; background: transparent; border-radius: 7px; display: flex; align-items: center; gap: 10px;
+      width: 100%; border: 0; background: transparent; border-radius: var(--radius-control); display: flex; align-items: center; gap: 10px;
       padding: 8px 10px; margin: 2px 0; font-size: 13px; font-weight: 520; cursor: pointer; text-align: left;
-      transition: background 0.15s, transform 0.1s;
+      transition: background-color 0.15s, transform 0.1s;
     }
-    .nav:hover { background: rgba(0, 0, 0, 0.045); }
+    .nav:hover { background: var(--hover); }
     .nav:active { transform: scale(0.985); }
-    .nav.active { background: rgba(0, 122, 255, 0.13); color: #006ee5; font-weight: 600; }
+    .nav.active {
+      background: var(--glass-state);
+      color: var(--blue); font-weight: 600;
+      box-shadow:
+        inset 0 1px 0 var(--glass-state-rim),
+        0 0 0 1px var(--glass-state-edge);
+    }
     .nav svg { width: 17px; height: 17px; }
     .nav span { flex: 1; }
+
+    /* 环境卡片：立在同一块侧栏上的薄板（panel 档，共享其模糊）。 */
     .environment-card {
-      margin-top: auto; padding: 12px; border: 1px solid var(--border); border-radius: 10px;
-      background: rgba(255, 255, 255, 0.5); font-size: 11px;
+      margin-top: auto; padding: 12px; border: 0; border-radius: 10px;
+      background: var(--panel); font-size: 11px;
+      box-shadow:
+        inset 0 1px 0 var(--glass-inner),
+        inset 0 0 0 1px var(--glass-edge);
     }
     .environment-card > div:not(.card-actions) {
       display: flex; align-items: center; gap: 7px; margin-top: 8px; color: var(--muted);
     }
     .environment-card .env-title {
-      margin: 0 0 4px !important; color: #3a3a3c !important; font-weight: 650; display: flex; align-items: center;
+      margin: 0 0 4px !important; color: var(--foreground) !important; font-weight: 650; display: flex; align-items: center;
     }
     .env-title span { flex: 1; }
     .env-title button {
       border: 0; background: transparent; cursor: pointer; color: var(--muted); padding: 2px; border-radius: 4px; display: flex; align-items: center;
+      transition: background-color 0.15s, color 0.15s;
     }
-    .env-title button:hover { background: rgba(0, 0, 0, 0.06); color: var(--blue); }
-    .environment-card i { width: 7px; height: 7px; border-radius: 50%; background: #ff453a; flex: 0 0 auto; }
-    .environment-card i.ok { background: #30b859; }
-    .environment-card i.warn { background: #f0a000; }
-    .environment-card b { margin-left: auto; font-size: 10px; font-weight: 550; color: #1d1d1f; }
+    .env-title button:hover { background: var(--hover); color: var(--blue); }
+    .environment-card i { width: 7px; height: 7px; border-radius: 50%; background: var(--danger); flex: 0 0 auto; }
+    .environment-card i.ok { background: var(--success); }
+    .environment-card i.warn { background: var(--warn); }
+    .environment-card b { margin-left: auto; font-size: 10px; font-weight: 550; color: var(--foreground); }
+
     .card-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-top: 10px; }
+
+    /* 卡片小按钮：透明玻璃（outline 按钮的处理）。 */
     .card-action-btn {
-      width: 100%; border: 1px solid var(--border); border-radius: 6px; padding: 6px; color: #3a3a3c;
-      background: white; font-size: 10px; font-weight: 600; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; gap: 4px; transition: background 0.15s;
+      width: 100%; border: 1px solid var(--border); border-radius: 6px; padding: 6px; color: var(--foreground);
+      background: var(--glass-control); font-size: 10px; font-weight: 600; cursor: pointer;
+      display: inline-flex; align-items: center; justify-content: center; gap: 4px;
+      transition: background-color 0.15s;
     }
-    .card-action-btn:hover:not(:disabled) { background: #f0f0f4; }
+    .card-action-btn:hover:not(:disabled) { background: var(--hover); }
     .card-action-btn:disabled { opacity: 0.45; cursor: default; }
-    .content { min-width: 0; min-height: 0; flex: 1; overflow: hidden; background: #f7f7f9; }
+)raw";
+
+    html += R"raw(
+    .content { min-width: 0; min-height: 0; flex: 1; overflow: hidden; background: transparent; }
     .view { height: 100%; overflow-y: auto; padding: 30px clamp(24px, 4vw, 50px) 40px; }
     .view.hidden { display: none !important; }
     .page-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; margin-bottom: 24px; }
     h1 { margin: 0 0 5px; font-size: 26px; letter-spacing: -0.035em; font-weight: 720; }
     .page-head p { margin: 0; color: var(--muted); font-size: 13px; }
     .head-actions { display: flex; gap: 8px; }
+
+    /* 普通按钮：透明玻璃，发丝线是它自己的边框。 */
     .button {
-      height: 34px; padding: 0 14px; border-radius: 7px; border: 1px solid var(--border); background: white;
+      height: 34px; padding: 0 14px; border-radius: var(--radius-control); border: 1px solid var(--border);
+      background: var(--glass-control); color: var(--foreground);
       display: inline-flex; align-items: center; justify-content: center; gap: 6px; font-size: 12px; font-weight: 620; cursor: pointer;
-      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04); transition: transform 0.12s ease, box-shadow 0.12s ease, background 0.15s ease;
+      box-shadow:
+        inset 0 1px 0 var(--glass-control-rim),
+        0 1px 2px var(--glass-contact);
+      transition: transform 0.12s ease, box-shadow 0.12s ease, background-color 0.15s ease;
     }
-    .button:hover:not(:disabled) { transform: translateY(-1px); box-shadow: 0 3px 8px rgba(0, 0, 0, 0.09); }
-    .button:active:not(:disabled) { transform: scale(0.98); }
-    .button.primary {
-      color: white; border-color: transparent; background: linear-gradient(#1687ff, #0072ed); box-shadow: 0 1px 2px rgba(0, 85, 190, 0.3);
+    .button:hover:not(:disabled) {
+      transform: translateY(-1px);
+      background: var(--hover);
+      box-shadow:
+        inset 0 1px 0 var(--glass-control-rim),
+        0 3px 8px -2px var(--glass-shade);
     }
-    .button.primary:hover:not(:disabled) { background: linear-gradient(#2490ff, #007aff); }
+    .button:active:not(:disabled) {
+      transform: scale(0.98);
+      box-shadow: inset 0 1px 0 var(--glass-control-rim);
+    }
     .button:disabled { opacity: 0.48; cursor: default; }
     .button svg { width: 14px; height: 14px; }
+
+    /* 主按钮：墨色的实心玻璃板——最实的一块。 */
+    .button.primary {
+      color: white; border-color: color-mix(in oklab, var(--blue) 55%, var(--primary-edge));
+      background-color: color-mix(in oklch, var(--blue) var(--primary-solid), transparent);
+      box-shadow:
+        inset 0 1px 0 var(--primary-rim),
+        inset 0 -1px 0 var(--primary-under),
+        inset 0 0 0 1px var(--primary-inner),
+        0 1px 2px var(--glass-contact),
+        0 8px 18px -9px var(--glass-shade);
+    }
+    .button.primary:hover:not(:disabled) {
+      background-color: color-mix(in oklch, var(--blue) calc(var(--primary-solid) - 10%), transparent);
+    }
+
+    /* 设置分节 / 状态卡：card 档（中间厚度）。边框让位，收光三件套接管。 */
     .setting-section {
-      padding: 20px 22px; margin-bottom: 14px; background: white; border: 1px solid var(--border); border-radius: 12px;
+      padding: 20px 22px; margin-bottom: 14px; background: var(--card); border: 0; border-radius: var(--radius);
+      -webkit-backdrop-filter: var(--glass-blur); backdrop-filter: var(--glass-blur);
+      box-shadow:
+        inset 0 1px 0 var(--glass-rim),
+        inset 0 0 0 1px var(--glass-inner),
+        0 0 0 1px var(--glass-edge),
+        0 1px 2px var(--glass-contact),
+        0 12px 32px -14px var(--glass-shade);
     }
     .setting-section h3 { margin: 0 0 16px; font-size: 13px; font-weight: 650; letter-spacing: -0.01em; }
-    label { display: block; color: #3a3a3c; font-size: 12px; font-weight: 600; }
-    label > span { float: right; color: #8e8e93; font-size: 10px; font-weight: 400; }
+    label { display: block; color: color-mix(in oklch, var(--foreground) 88%, transparent); font-size: 12px; font-weight: 600; }
+    label > span { float: right; color: var(--muted); font-size: 10px; font-weight: 400; }
+
+    /* 输入域：一块可敲字的透明玻璃——rim 在顶缘内侧，发丝线是它自己的边框，
+       聚焦时边框变成更亮的一根线，仅此而已。 */
     input, select {
       width: 100%; height: 36px; margin-top: 7px; padding: 0 11px; outline: 0;
-      border: 1px solid rgba(0, 0, 0, 0.13); border-radius: 7px; background: rgba(248, 248, 250, 0.85);
-      color: inherit; font-size: 12px; transition: border 0.15s, box-shadow 0.15s, background 0.15s; user-select: text;
+      border: 1px solid var(--field-edge); border-radius: var(--radius-control); background: var(--field);
+      color: inherit; font-size: 12px;
+      transition: border-color 0.15s, background-color 0.15s; user-select: text;
     }
-    input:focus, select:focus { border-color: var(--blue); box-shadow: 0 0 0 3px rgba(0, 122, 255, 0.11); background: white; }
-    input:disabled, select:disabled { opacity: 0.45; background: rgba(0, 0, 0, 0.04); cursor: not-allowed; }
+    input:focus, select:focus {
+      border-color: var(--focus-line); background: var(--field);
+    }
+    input:disabled, select:disabled { opacity: 0.45; background: var(--secondary); cursor: not-allowed; }
     .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
     .setting-section label + label, .setting-section .two-col + label, .setting-section label + .two-col, .setting-section .check-row + .check-row { margin-top: 14px; }
+
+    /* 开关行：立着的最薄板（panel 档）；选中行穿唯一状态的玻璃。 */
     .check-row {
-      display: flex; align-items: center; gap: 12px; padding: 12px; border: 1px solid var(--border);
-      border-radius: 8px; background: rgba(248, 248, 250, 0.7); cursor: pointer;
+      display: flex; align-items: center; gap: 12px; padding: 12px; border: 0;
+      border-radius: 10px; background: var(--panel); cursor: pointer;
+      box-shadow:
+        inset 0 1px 0 var(--glass-inner),
+        inset 0 0 0 1px var(--glass-edge);
     }
+    .check-row:has(input:checked) {
+      background: var(--glass-state);
+      box-shadow:
+        inset 0 1px 0 var(--glass-state-rim),
+        inset 0 0 0 1px var(--glass-state-edge);
+    }
+
+    /* 开关：槽是凹进去的（光反向落）；旋钮是最亮的一块板。 */
     .check-row input {
       appearance: none; -webkit-appearance: none; flex: 0 0 auto; width: 36px; height: 20px;
-      margin: 0; padding: 0; border: 0; border-radius: 10px; background: #c7c7cc; position: relative; cursor: pointer;
-      box-shadow: none; transition: background 0.2s;
+      margin: 0; padding: 0; border: 0; border-radius: 10px; background: var(--secondary); position: relative; cursor: pointer;
+      box-shadow:
+        inset 0 1px 1.5px var(--well-shade),
+        inset 0 -1px 0 var(--well-rim);
+      transition: background-color 0.2s;
+    }
+    /* 勾选后：槽变成墨色的实心小板（半厚度的那一档）。 */
+    .check-row input:checked {
+      background-color: color-mix(in oklch, var(--success) var(--primary-solid), transparent);
+      box-shadow:
+        inset 0 1px 0 color-mix(in oklch, oklch(1 0 0) 55%, transparent),
+        inset 0 -1px 0 color-mix(in oklch, oklch(0 0 0) 22%, transparent);
     }
     .check-row input::after {
       content: ""; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px;
-      border-radius: 50%; background: white; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
+      border-radius: 50%; background: var(--knob);
+      box-shadow:
+        inset 0 1px 0 oklch(1 0 0 / 90%),
+        inset 0 -1px 0 oklch(0 0 0 / 14%),
+        0 1px 2px var(--knob-shade);
       transition: transform 0.2s cubic-bezier(0.2, 0.8, 0.2, 1);
     }
-    .check-row input:checked { background: #30b859; }
     .check-row input:checked::after { transform: translateX(16px); }
     .check-row span { float: none; flex: 1; }
     .check-row strong { display: block; font-size: 12px; font-weight: 600; }
     .check-row small { display: block; margin-top: 2px; color: var(--muted); font-size: 10px; font-weight: 400; }
     .form-hint { margin-top: 10px; color: var(--muted); font-size: 11px; }
     .status-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px; margin-bottom: 20px; }
+
+    /* 状态卡：card 档，同 setting-section 一块材质。 */
     .status-card {
-      background: white; border: 1px solid var(--border); border-radius: 12px; padding: 16px 18px; box-shadow: 0 2px 8px rgba(0, 0, 0, 0.03);
+      background: var(--card); border: 0; border-radius: var(--radius); padding: 16px 18px;
+      -webkit-backdrop-filter: var(--glass-blur); backdrop-filter: var(--glass-blur);
+      box-shadow:
+        inset 0 1px 0 var(--glass-rim),
+        inset 0 0 0 1px var(--glass-inner),
+        0 0 0 1px var(--glass-edge),
+        0 1px 2px var(--glass-contact),
+        0 12px 32px -14px var(--glass-shade);
     }
     .status-card-top { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
     .status-card-icon {
-      width: 32px; height: 32px; border-radius: 8px; display: grid; place-items: center; background: rgba(0, 122, 255, 0.1); color: var(--blue);
+      width: 32px; height: 32px; border-radius: 8px; display: grid; place-items: center;
+      background: var(--glass-state); color: var(--blue);
+      box-shadow:
+        inset 0 1px 0 var(--glass-state-rim),
+        inset 0 0 0 1px var(--glass-state-edge);
     }
-    .status-card-icon.sun { background: rgba(255, 149, 0, 0.12); color: #ff9500; }
-    .status-card-icon.moon { background: rgba(88, 86, 214, 0.12); color: #5856d6; }
+    .status-card-icon.sun { color: var(--sun); }
+    .status-card-icon.moon { color: var(--moon); }
     .status-card-title { flex: 1; font-size: 13px; font-weight: 650; }
     .status-tag {
       padding: 3px 8px; border-radius: 99px; font-size: 10px; font-weight: 650;
-      background: rgba(48, 184, 89, 0.1); color: #248b43; display: inline-flex; align-items: center; gap: 4px;
+      background: color-mix(in oklch, var(--success) 12%, transparent); color: var(--success);
+      display: inline-flex; align-items: center; gap: 4px;
     }
     .status-tag i { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
-    .status-tag.warn { background: rgba(240, 160, 0, 0.12); color: #946700; }
-    .status-tag.bad { background: rgba(255, 69, 58, 0.12); color: #c72e27; }
+    .status-tag.warn { background: color-mix(in oklch, var(--warn) 14%, transparent); color: var(--warn); }
+    .status-tag.bad { background: color-mix(in oklch, var(--danger) 14%, transparent); color: var(--danger); }
     .status-meta { display: grid; gap: 6px; font-size: 11px; }
     .status-meta-row { display: flex; justify-content: space-between; color: var(--muted); }
-    .status-meta-row b { color: #1d1d1f; font-weight: 550; }
+    .status-meta-row b { color: var(--foreground); font-weight: 550; }
+
+    /* 日志面板：厚板（popover 档）上挖出的墨色凹井——凹槽规则，
+       光从反向落；文字颜色不变。 */
     .log-panel {
-      background: #1d1d20; border-radius: 12px; padding: 14px 0; overflow-y: auto; max-height: 320px; min-height: 200px;
-      color: #d7d7dc; box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.35);
+      background: var(--log-bg); border-radius: 10px; padding: 14px 0; overflow-y: auto; max-height: 320px; min-height: 200px;
+      color: var(--log-fg);
+      box-shadow:
+        inset 0 1px 1.5px var(--well-shade),
+        inset 0 -1px 0 var(--well-rim),
+        inset 0 0 0 1px var(--glass-edge);
     }
     .log-line {
       display: flex; gap: 12px; padding: 4px 16px; font: 11px/1.5 "Cascadia Mono", Consolas, monospace; user-select: text;
     }
-    .log-line time { flex: 0 0 65px; color: #67676e; }
+    .log-line time { flex: 0 0 65px; color: var(--log-dim); }
     .log-line span { white-space: pre-wrap; overflow-wrap: anywhere; }
-    .log-line.cmd span { color: #68a8ff; }
-    .log-line.ok span { color: #5cdb7e; }
-    .log-line.warn span { color: #ffd06a; }
-    .log-line.err span { color: #ff837c; }
+    .log-line.cmd span { color: oklch(0.72 0.12 250); }
+    .log-line.ok span { color: var(--success); }
+    .log-line.warn span { color: var(--warn); }
+    .log-line.err span { color: var(--danger); }
+)raw";
+
+    html += R"raw(
+    /* Toast：浮起的东西是厚玻璃（popover 档），按类型上一道左侧色条。 */
     .toast-stack { position: fixed; z-index: 200; top: 18px; right: 18px; display: flex; flex-direction: column; gap: 8px; pointer-events: none; }
     .toast {
-      pointer-events: auto; min-width: 260px; max-width: 380px; padding: 11px 14px; border: 1px solid var(--border);
-      border-left: 3px solid var(--blue); border-radius: 9px; background: rgba(255, 255, 255, 0.96); backdrop-filter: blur(12px);
-      box-shadow: 0 8px 30px rgba(0, 0, 0, 0.15); font-size: 12px; font-weight: 500; animation: toastIn 0.2s ease-out; transition: opacity 0.2s, transform 0.2s;
+      pointer-events: auto; min-width: 260px; max-width: 380px; padding: 11px 14px;
+      border: 0; border-left: 3px solid var(--blue); border-radius: 9px;
+      background: var(--popover);
+      -webkit-backdrop-filter: var(--glass-blur); backdrop-filter: var(--glass-blur);
+      box-shadow:
+        inset 0 1px 0 var(--glass-rim),
+        inset 0 -1px 0 var(--popover-under),
+        0 0 0 1px var(--popover-edge),
+        0 24px 60px -18px var(--glass-shade),
+        0 6px 16px -6px var(--glass-lift);
+      color: var(--foreground); font-size: 12px; font-weight: 500;
+      animation: toastIn 0.2s ease-out; transition: opacity 0.2s, transform 0.2s;
     }
-    .toast.success { border-left-color: #30b859; }
-    .toast.error { border-left-color: #ff453a; }
-    .toast.warning { border-left-color: #f0a000; }
+    .toast.success { border-left-color: var(--success); }
+    .toast.error { border-left-color: var(--danger); }
+    .toast.warning { border-left-color: var(--warn); }
     .toast.leaving { opacity: 0; transform: translateX(12px); }
     @keyframes toastIn { from { opacity: 0; transform: translateX(12px); } to { opacity: 1; transform: translateX(0); } }
-    @media (prefers-color-scheme: dark) {
-      :root {
-        color: #f2f2f7; --surface: rgba(43, 43, 46, 0.9); --border: rgba(255, 255, 255, 0.09);
-        --muted: #98989f; --sidebar: rgba(37, 37, 40, 0.94);
-      }
-      .window-shell, .content { background: #1e1e20; }
-      .nav:hover { background: rgba(255, 255, 255, 0.05); }
-      .nav.active { background: rgba(0, 122, 255, 0.22); color: #5aa7ff; }
-      .environment-card { background: rgba(255, 255, 255, 0.035); }
-      .environment-card .env-title { color: #e4e4e8 !important; }
-      .environment-card b { color: #eeeef2; }
-      .card-action-btn { background: #2f2f32; color: #dddde2; }
-      .card-action-btn:hover:not(:disabled) { background: #3a3a3e; }
-      .setting-section, .status-card { background: rgba(47, 47, 50, 0.88); }
-      label { color: #d8d8dc; }
-      .status-meta-row b { color: #eeeef2; }
-      .button { background: #3b3b3e; color: #eeeef2; }
-      .button:hover:not(:disabled) { background: #46464a; }
-      input, select, .check-row { color: #eeeef2; background: #29292c; border-color: rgba(255, 255, 255, 0.12); }
-      input:focus, select:focus { background: #2f2f33; }
-      .check-row input { background: #5a5a60; }
-      .check-row input:checked { background: #30b859; }
-      .toast { background: rgba(48, 48, 51, 0.98); color: #f2f2f7; }
+
+    /* 少动效 + 可关（模板 Motion 节的精神：动只说明有事发生）。 */
+    @media (prefers-reduced-motion: reduce) {
+      .toast { animation: none; }
+      .light, .nav, .button, .check-row input::after { transition: none; }
     }
   </style>
 </head>)raw";
@@ -341,7 +677,6 @@ inline std::string get_ui_html() {
 
     <main class="main-area">
       <section class="content">
-
         <!-- VIEW: STATUS -->
         <div class="view" id="viewStatus">
           <div class="page-head">
@@ -512,6 +847,13 @@ inline std::string get_ui_html() {
   <script>
     let isEditingCoordinates = false;
 
+    // 主题应用：显式 .dark class（C++ 推送的 theme.apps 为唯一权威；
+    // prefers-color-scheme 仅在初始 head 脚本里作回退起点）。
+    function applyThemeClass(appsValue) {
+      const dark = (appsValue === 0);
+      document.documentElement.classList.toggle("dark", dark);
+    }
+
     function showToast(msg, type = "info") {
       const stack = document.getElementById("toastStack");
       const toast = document.createElement("div");
@@ -632,6 +974,10 @@ inline std::string get_ui_html() {
         switchView(msg.switch_view);
       }
 
+      if (msg.theme) {
+        applyThemeClass(msg.theme.apps);
+      }
+
       if (msg.state) {
         renderState(msg.state, msg.config, msg.theme, msg.startup);
       }
@@ -642,6 +988,8 @@ inline std::string get_ui_html() {
     }
 
     function renderState(state, config, theme, startup) {
+      if (theme) applyThemeClass(theme.apps);
+
       const envPill = document.getElementById("envPill");
       const envPillText = document.getElementById("envPillText");
       if (state.core_running) {
