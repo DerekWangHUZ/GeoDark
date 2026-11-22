@@ -1,0 +1,26 @@
+# GeoDark CI：MSVC + CMake 构建，跑全部 CTest 套件。
+# Runner 需要 Windows + Visual Studio 2022 Build Tools（C++ 桌面开发负载）。
+
+stages:
+  - build
+  - test
+
+variables:
+  CMAKE_DIR: "C:/Program Files (x86)/Microsoft Visual Studio/2022/BuildTools/Common7/IDE/CommonExtensions/Microsoft/CMake/CMake/bin"
+
+build:
+  stage: build
+  tags: [windows, msvc]
+  script:
+    - powershell -NoProfile -ExecutionPolicy Bypass -File tools/ci.ps1 -Configure -Build
+  artifacts:
+    paths:
+      - build/Release/GeoDark.exe
+      - build/Release/GeoDarkUI.exe
+    expire_in: 1 week
+
+test:
+  stage: test
+  tags: [windows, msvc]
+  script:
+    - powershell -NoProfile -ExecutionPolicy Bypass -File tools/ci.ps1 -Test

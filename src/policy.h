@@ -20,4 +20,8 @@ ThemeDecision decide_theme(bool auto_enabled, bool expected_light,
                            std::int64_t now_utc, std::int64_t next_switch_utc,
                            ManualOverride previous_override, bool external_theme_change);
 
+// Pure comparison helper: true when a readable theme value differs from the
+// solar expectation. Unreadable values (-1) never count as divergence.
+bool theme_diverges(int actual_light, bool expected_light);
+
 } // namespace geodark

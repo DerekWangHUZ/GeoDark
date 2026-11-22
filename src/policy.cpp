@@ -24,4 +24,9 @@ ThemeDecision decide_theme(bool auto_enabled, bool expected_light,
     return decision;
 }
 
+bool theme_diverges(int actual_light, bool expected_light) {
+    if (actual_light < 0) return false;
+    return (actual_light != 0) != expected_light;
+}
+
 } // namespace geodark

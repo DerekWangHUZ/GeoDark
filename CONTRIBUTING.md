@@ -16,7 +16,13 @@
 
 ## 2. 本地构建与验证流水线
 
-在提交修改之前，请务必在本地完成全套编译与自动化测试验证：
+在提交修改之前，请务必完成全套编译与自动化测试验证。推荐一键脚本（配置 + 构建 + 全部测试，与 GitLab CI 共用逻辑）：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File tools\ci.ps1
+```
+
+或手动分步执行：
 
 ```powershell
 # 1. 配置 CMake 生成目录
@@ -25,7 +31,7 @@ cmake -S . -B build -A x64
 # 2. 编译 Release 目标
 cmake --build build --config Release
 
-# 3. 运行自动化算法测试集
+# 3. 运行全部自动化测试（solar：日照算法与策略；bridge：桥协议解析）
 ctest --test-dir build -C Release --output-on-failure
 ```
 
@@ -50,6 +56,8 @@ powershell -File tools\measure.ps1 -Minutes 1
   - 严禁引入持续自旋循环（Spin-loop / Polling），所有唤醒动作必须基于系统事件或单次定时器驱动。
 - **文档完整性**：
   - 增改用户可见行为、注册表键值或界面交互时，请同步更新 `README.md`、`CHANGELOG.md` 及相关架构文档。
+- **版本号单点维护**：
+  - 版本号只改 `CMakeLists.txt` 的 `project(GeoDark VERSION ...)`；rc 与 manifest 由 `resources/*.in` 模板在配置期自动生成，禁止手工编辑 `build/` 之外的生成产物。
 
 ---
 

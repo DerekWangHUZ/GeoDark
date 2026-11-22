@@ -170,6 +170,33 @@ bool save_state(const State& state) {
     return success;
 }
 
+// The UI records a sequence-stamped command instead of rewriting State, so the
+// core (the single state owner) merges it without lost-update races.
+OverrideCommand load_override_command() {
+    OverrideCommand result;
+    HKEY key = open_key(override_command_key, KEY_READ, false);
+    if (!key) return result;
+    result.sequence = parse_i64(read_string(key, L"Sequence"));
+    result.lock = read_dword(key, L"Lock", 0) != 0;
+    result.until_utc = parse_i64(read_string(key, L"UntilUtc"));
+    RegCloseKey(key);
+    if (result.sequence < 0) result.sequence = 0;
+    if (result.until_utc < 0) result.until_utc = 0;
+    return result;
+}
+
+bool save_override_command(const OverrideCommand& command) {
+    if (command.sequence < 0 || command.until_utc < 0) return false;
+    HKEY key = open_key(override_command_key, KEY_SET_VALUE, true);
+    if (!key) return false;
+    const bool success =
+        write_string(key, L"Sequence", number(command.sequence)) &&
+        write_dword(key, L"Lock", command.lock ? 1 : 0) &&
+        write_string(key, L"UntilUtc", number(command.until_utc));
+    RegCloseKey(key);
+    return success;
+}
+
 ThemeValues read_theme() {
     ThemeValues result;
     HKEY key = open_key(theme_key, KEY_READ, false);

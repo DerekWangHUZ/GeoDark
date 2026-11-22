@@ -30,8 +30,8 @@
 - 在 125%、150% 或 200% 等高缩放比例的屏幕上，窗口内容文字有插值拉伸感。
 
 ### 排查与解决方法
-1. **确保使用最新 v0.2.0 或更高版本**：
-   - 从 v0.2.0 起，程序已内嵌 `PerMonitorV2` 高 DPI 清单，并注入进程级 DPI 感知。
+1. **确认程序自带的高 DPI 支持未被外部覆盖**：
+   - GeoDark 已内嵌 `PerMonitorV2` 高 DPI 清单，并注入进程级 DPI 感知。
 2. **检查文件属性中的外部兼容性覆盖**：
    - 右键点击 `GeoDarkUI.exe` -> 选择 **“属性”** -> 切换至 **“兼容性”** 选项卡。
    - 点击 **“更改高 DPI 设置”**。
@@ -98,7 +98,7 @@ Windows 附件管理器（Attachment Manager）对同时满足以下两个条件
 1. 文件带有 **Mark of the Web（MotW，`Zone.Identifier` 数据流）**——凡是从网络下载、网盘同步、浏览器解压或跨机复制得到的文件都会带上；
 2. 文件**未经数字签名**，或签名证书不受本机信任。
 
-GeoDark 官方发行包当前未做商业代码签名，因此带 MotW 的副本每次启动都会触发提示。
+GeoDark 官方发行包使用自建证书签名，该证书仅在开发者本机受信任；因此其他机器上带 MotW 的副本每次启动仍会触发提示。
 
 ### 解决方法
 任选其一：
@@ -121,7 +121,7 @@ GeoDark 官方发行包当前未做商业代码签名，因此带 MotW 的副本
 
 - **方法 C（组策略，不推荐普通用户）**：将 `.exe` 加入 `HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Associations` 的 `LowRiskFileTypes`。这会全局放行所有 exe 的该检查，安全面过大，仅在完全理解后果时使用。
 
-> **补充（0.3.1 实测）**：若签名、机器信任、解除锁定全部做完**仍然弹窗**，多半是目录带着 `Low Mandatory Level`（低完整性）NTFS 标签——Windows 把低完整性内容按 Internet 区处理；标签在 NTFS SACL 上而不在 `Zone.Identifier` 里，所以 `Unblock-File` 无效。用 [第 9 条](#9-geodarkui-启动后窗口一片空白白屏) 的 `tools\diag-zone.ps1` 验证，并用 `icacls <目录> /setintegritylevel (OI)(CI)M` 修复。
+> **补充**：若签名、机器信任、解除锁定全部做完**仍然弹窗**，多半是目录带着 `Low Mandatory Level`（低完整性）NTFS 标签——Windows 把低完整性内容按 Internet 区处理；标签在 NTFS SACL 上而不在 `Zone.Identifier` 里，所以 `Unblock-File` 无效。用 [第 9 条](#9-geodarkui-启动后窗口一片空白白屏) 的 `tools\diag-zone.ps1` 验证，并用 `icacls <目录> /setintegritylevel (OI)(CI)M` 修复。
 
 ---
 
@@ -144,25 +144,25 @@ powershell -File tools\measure.ps1 -Minutes 1
 
 ### 现象
 - `GeoDarkUI.exe` 能弹出窗口（标题“GeoDark 设置”、可拖动），但整个窗口纯白，无任何界面内容。
-- 旧版本（< 0.3.1）此时不报任何错误；0.3.1 起会在失败时弹窗提示错误码，并在 `%LOCALAPPDATA%\GeoDark\ui.log` 留下日志。
+- 初始化失败时会弹窗提示错误码，并在 `%LOCALAPPDATA%\GeoDark\ui.log` 留下日志。
 
 ### 原因
-白屏 = WebView2 环境创建失败，而 0.3.1 之前的版本把失败静默吞掉了。实测有两类触发条件：
+白屏 = WebView2 环境创建失败。实测有两类触发条件：
 
-1. **仓库目录带着 `Low Mandatory Level`（低完整性）NTFS 标签，Windows 把低完整性内容一律按 Internet 区处理**（本机 2026-10 的最终定论）。
-   - 表现：`...\source\repos\GeoDark\` 下所有文件（含 README.md、新建的任意文件）被 `MapUrlToZone` 判为 Internet 区 → 附件管理器弹“打开文件 - 安全警告”；WebView2 加载器在该路径下无法创建浏览器进程 → UI 必现白屏。
+1. **程序所在目录带着 `Low Mandatory Level`（低完整性）NTFS 标签，Windows 把低完整性内容一律按 Internet 区处理**。
+   - 表现：该目录下所有文件（含 README.md、新建的任意文件）被 `MapUrlToZone` 判为 Internet 区 → 附件管理器弹“打开文件 - 安全警告”；WebView2 加载器在该路径下无法创建浏览器进程 → UI 必现白屏。
    - 定位方法：`icacls <目录>` 中可见 `Mandatory Label\Low Mandatory Level:(OI)(CI)(NW)`；因果验证：给空目录打上同样标签，同一份 exe 立刻变 zone=3；标签提回 Medium，立刻恢复 zone=0 且 WebView2 正常。
    - 来源：目录 ACL 中存在**非本机 SID** 的显式 ACE（`S-1-5-21-2394...` 等），说明整个目录连同 ACL 是从别的机器整目录复制/恢复过来的，低完整性标签随之带入，并被 (OI)(CI) 继承到所有新建文件。签名、机器信任、`Unblock-File`、杀软排除项/信任组/暂停保护全都无效——因为标记不在文件内容或 `Zone.Identifier` 上，而在 NTFS 完整性标签（SACL）上。
-   - 次生现象：卡巴斯基曾于 2026-09-30 对该目录下编译的 exe 给出行为误报 `VHO:Trojan.Win32.Khalesi.gen`（低完整性上下文中运行的未签名程序易被行为引擎盯上，记录见 `%ProgramData%\Kaspersky Lab\AVP21.26\Data\detects.db`）。它是本问题的次生噪声而非原因，是否处理均不影响修复。
-2. **WebView2 用户数据目录（`%LOCALAPPDATA%\GeoDark\WebView2`）损坏**：浏览器进程启动即退。0.3.1 起会自动改名保留现场并重试一次。
+   - 次生现象：低完整性上下文中运行的未签名程序易被杀软行为引擎误报。它是本问题的次生噪声而非原因，是否处理均不影响修复。
+2. **WebView2 用户数据目录（`%LOCALAPPDATA%\GeoDark\WebView2`）损坏**：浏览器进程启动即退。GeoDark 会自动改名保留现场并重试一次。
 
 ### 解决方法
-1. **给仓库目录打回正常完整性级别（根治，本机已验证）**：
+1. **给程序目录打回正常完整性级别（根治）**：
    ```cmd
-   icacls "C:\Users\DerekWang\source\repos\GeoDark" /setintegritylevel (OI)(CI)M
+   icacls "C:\path\to\GeoDark" /setintegritylevel (OI)(CI)M
    ```
    子目录与文件会自动继承更新。完成后用 `tools\diag-zone.ps1` 复查 `zone=0`，弹窗与白屏同时消失，可直接在 `build\Release` 下构建、运行、测试。
-2. **升级到 0.3.1+**：初始化失败会明确弹窗并写日志，不再静默白屏；用户数据目录损坏会自动重置重试。
+2. **确认使用最新版本**：初始化失败会明确弹窗并写日志，不再静默白屏；用户数据目录损坏会自动重置重试。
 3. **手动核验路径判定**：
    ```powershell
    powershell -NoProfile -ExecutionPolicy Bypass -File tools\diag-zone.ps1 "C:\path\to\GeoDarkUI.exe"

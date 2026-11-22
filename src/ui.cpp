@@ -1,5 +1,4 @@
 #include "settings.h"
-#include "solar.h"
 #include "ui_html.h"
 
 // GeoDarkUI 宿主窗口（frameless + WebView2）。
@@ -19,6 +18,8 @@
 #include <wrl/client.h>
 #include <wrl/event.h>
 #include <WebView2.h>
+
+#include "bridge_json.h"
 
 #include <cmath>
 #include <cstdint>
@@ -59,58 +60,8 @@ std::wstring escape_json(const std::wstring& input) {
     return out;
 }
 
-std::wstring json_extract_string(const std::wstring& json, const std::wstring& key) {
-    const std::wstring pattern = L"\"" + key + L"\"";
-    std::size_t pos = json.find(pattern);
-    if (pos == std::wstring::npos) return L"";
-    pos = json.find(L':', pos + pattern.size());
-    if (pos == std::wstring::npos) return L"";
-    pos = json.find_first_not_of(L" \t\r\n", pos + 1);
-    if (pos == std::wstring::npos || json[pos] != L'\"') return L"";
-    ++pos;
-    std::wstring result;
-    bool escaped = false;
-    for (; pos < json.size(); ++pos) {
-        const wchar_t c = json[pos];
-        if (escaped) {
-            result += c;
-            escaped = false;
-        } else if (c == L'\\') {
-            escaped = true;
-        } else if (c == L'\"') {
-            break;
-        } else {
-            result += c;
-        }
-    }
-    return result;
-}
-
-int json_extract_int(const std::wstring& json, const std::wstring& key, int default_val = 0) {
-    const std::wstring pattern = L"\"" + key + L"\"";
-    std::size_t pos = json.find(pattern);
-    if (pos == std::wstring::npos) return default_val;
-    pos = json.find(L':', pos + pattern.size());
-    if (pos == std::wstring::npos) return default_val;
-    pos = json.find_first_not_of(L" \t\r\n", pos + 1);
-    if (pos == std::wstring::npos) return default_val;
-    wchar_t* end = nullptr;
-    const long val = wcstol(json.c_str() + pos, &end, 10);
-    return end != (json.c_str() + pos) ? static_cast<int>(val) : default_val;
-}
-
-bool json_extract_bool(const std::wstring& json, const std::wstring& key, bool default_val = false) {
-    const std::wstring pattern = L"\"" + key + L"\"";
-    std::size_t pos = json.find(pattern);
-    if (pos == std::wstring::npos) return default_val;
-    pos = json.find(L':', pos + pattern.size());
-    if (pos == std::wstring::npos) return default_val;
-    pos = json.find_first_not_of(L" \t\r\n", pos + 1);
-    if (pos == std::wstring::npos) return default_val;
-    if (json.compare(pos, 4, L"true") == 0) return true;
-    if (json.compare(pos, 5, L"false") == 0) return false;
-    return default_val;
-}
+// json_extract_string / json_extract_int / json_extract_bool live in
+// bridge_json.h (shared with tests/bridge_tests.cpp).
 
 bool parse_double(const std::wstring& text, double& result) {
     if (text.empty()) return false;
@@ -170,8 +121,6 @@ std::wstring format_hresult(HRESULT hr) {
 // ============================================================================
 constexpr float kWindowCornerRadiusDip = 32.0f;
 
-typedef UINT (WINAPI* GetDpiForWindowProc)(HWND);
-
 // 按当前窗口尺寸与 DPI 重新设置窗口圆角区域。幂等；找不到窗口时静默返回。
 //
 // 注意（PortPilot win.go 已踩过的坑）：SetWindowRgn 传 NULL 清空区域时
@@ -191,18 +140,10 @@ void apply_window_shape(HWND hwnd) {
     const long h = rect.bottom - rect.top;
     if (w <= 0 || h <= 0) return;
 
-    int dpi = 96;
-    static GetDpiForWindowProc get_dpi_for_window = nullptr;
-    if (!get_dpi_for_window) {
-        if (HMODULE user32 = GetModuleHandleW(L"user32.dll")) {
-            get_dpi_for_window =
-                reinterpret_cast<GetDpiForWindowProc>(GetProcAddress(user32, "GetDpiForWindow"));
-        }
-    }
-    if (get_dpi_for_window) {
-        const UINT window_dpi = get_dpi_for_window(hwnd);
-        if (window_dpi != 0) dpi = static_cast<int>(window_dpi);
-    }
+    // 进程已声明 PerMonitorV2（manifest + SetProcessDpiAwarenessContext），
+    // GetDpiForWindow 可静态链接（user32，Win10 1607+），无需 GetProcAddress。
+    const UINT window_dpi = GetDpiForWindow(hwnd);
+    const int dpi = window_dpi != 0 ? static_cast<int>(window_dpi) : 96;
 
     const int diameter = static_cast<int>(kWindowCornerRadiusDip * dpi / 96.0f + 0.5f) * 2;
 
@@ -217,6 +158,7 @@ void apply_window_shape(HWND hwnd) {
 
 // 轻量诊断日志：%LOCALAPPDATA%\GeoDark\ui.log（UTF-16 追加写）。
 // 用于排查 WebView2 初始化失败等“无窗口可看”的问题。
+// 超过 1MB 时丢弃旧内容重写，避免反复失败时无限增长。
 void append_ui_log(const std::wstring& line) {
     PWSTR local_app_data = nullptr;
     if (FAILED(SHGetKnownFolderPath(FOLDERID_LocalAppData, 0, nullptr, &local_app_data)) ||
@@ -226,6 +168,13 @@ void append_ui_log(const std::wstring& line) {
     dir += L"\\GeoDark";
     CreateDirectoryW(dir.c_str(), nullptr);
     const std::wstring path = dir + L"\\ui.log";
+    constexpr unsigned long long kMaxLogBytes = 1024 * 1024;
+    if (WIN32_FILE_ATTRIBUTE_DATA attrs{};
+        GetFileAttributesExW(path.c_str(), GetFileExInfoStandard, &attrs) &&
+        (static_cast<unsigned long long>(attrs.nFileSizeHigh) << 32 |
+            attrs.nFileSizeLow) >= kMaxLogBytes) {
+        DeleteFileW(path.c_str());
+    }
     HANDLE file = CreateFileW(path.c_str(), FILE_APPEND_DATA, FILE_SHARE_READ | FILE_SHARE_WRITE,
                               nullptr, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
     if (file == INVALID_HANDLE_VALUE) return;
@@ -254,7 +203,18 @@ bool reset_webview_user_data() {
 class UiApp {
 public:
     explicit UiApp(HINSTANCE instance) : instance_(instance) {
-        start_in_settings_ = (wcsstr(GetCommandLineW(), L"--settings") != nullptr);
+        // Exact-argument match, not substring search: a path containing
+        // "--settings" must not trigger the settings view.
+        int argc = 0;
+        if (LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc)) {
+            for (int i = 0; i < argc; ++i) {
+                if (wcscmp(argv[i], L"--settings") == 0) {
+                    start_in_settings_ = true;
+                    break;
+                }
+            }
+            LocalFree(argv);
+        }
     }
 
     int run(int show) {
@@ -272,15 +232,8 @@ public:
 
         if (!RegisterClassExW(&klass)) return 1;
 
-        UINT dpi = 96;
-        HMODULE user32_mod = GetModuleHandleW(L"user32.dll");
-        if (user32_mod) {
-            typedef UINT (WINAPI* GetDpiForSystemProc)();
-            auto get_dpi = reinterpret_cast<GetDpiForSystemProc>(GetProcAddress(user32_mod, "GetDpiForSystem"));
-            if (get_dpi) {
-                dpi = get_dpi();
-            }
-        }
+        // PerMonitorV2 已在 manifest 声明；系统 DPI 仅决定初始窗口尺寸。
+        UINT dpi = GetDpiForSystem();
         if (dpi == 0) dpi = 96;
 
         const int width = MulDiv(940, dpi, 96);
@@ -380,6 +333,27 @@ private:
                                         }).Get(),
                                     &message_token_);
 
+                                // Defense in depth: the UI is a single embedded
+                                // page (NavigateToString). Any other navigation
+                                // (e.g. an external link) must not run against
+                                // the bridge, so cancel it at the host level.
+                                webview_->add_NavigationStarting(
+                                    Callback<ICoreWebView2NavigationStartingEventHandler>(
+                                        [](ICoreWebView2*, ICoreWebView2NavigationStartingEventArgs* args) -> HRESULT {
+                                            PWSTR uri = nullptr;
+                                            if (SUCCEEDED(args->get_Uri(&uri)) && uri) {
+                                                const bool allow =
+                                                    wcsncmp(uri, L"about:blank", 11) == 0 ||
+                                                    wcsncmp(uri, L"data:", 5) == 0;
+                                                CoTaskMemFree(uri);
+                                                if (!allow) args->put_Cancel(TRUE);
+                                            } else {
+                                                args->put_Cancel(TRUE);
+                                            }
+                                            return S_OK;
+                                        }).Get(),
+                                    &navigation_token_);
+
                                 const std::string html_utf8 = get_ui_html();
                                 std::wstring html_utf16;
                                 const int len = MultiByteToWideChar(CP_UTF8, 0, html_utf8.c_str(), -1, nullptr, 0);
@@ -391,6 +365,7 @@ private:
 
                                 send_state_to_ui();
                                 SetTimer(window_, 1, 3000, nullptr);
+                                status_timer_active_ = true;
                                 webview_ready_ = true;
                                 // S9①②：WebView 就绪后立即同步裁角并补推一次最大化
                                 // 状态（JS 启动脚本先用 sessionStorage 兜底首帧）。
@@ -531,6 +506,17 @@ private:
         }
     }
 
+    // 状态轮询定时器仅在窗口可见（非最小化）时运行；WebView 未就绪不启动。
+    void update_status_timer() {
+        if (!window_ || !IsWindow(window_) || !webview_ready_) return;
+        if (IsIconic(window_)) {
+            KillTimer(window_, 1);
+        } else if (!status_timer_active_) {
+            SetTimer(window_, 1, 3000, nullptr);
+        }
+        status_timer_active_ = !IsIconic(window_);
+    }
+
     void save(const std::wstring& json) {
         Config config = load_config();
         config.auto_enabled = json_extract_bool(json, L"auto_enabled", true);
@@ -611,23 +597,22 @@ private:
 
     void switch_theme(bool light) {
         const Config config = load_config();
-        State state = load_state();
+        const State state = load_state();
         if (config.auto_enabled) {
             const bool available = config.location_mode == LocationMode::Manual
                 ? config.has_manual_coordinates : state.has_location;
             if (available) {
-                const double lat = config.location_mode == LocationMode::Manual
-                    ? config.manual_latitude : state.latitude;
-                const double lon = config.location_mode == LocationMode::Manual
-                    ? config.manual_longitude : state.longitude;
-                const SolarSchedule schedule = calculate_solar_schedule(
-                    utc_now(), lat, lon, config.sunrise_offset_minutes,
-                    config.sunset_offset_minutes);
-                state.override_active = true;
-                state.override_phase_light = schedule.light_now;
-                state.override_until_utc = schedule.next_switch_utc;
-                save_state(state);
-                signal_manual_override();
+                // 只写序列号指令并通知核心合并；UI 不整包写 State，
+                // 避免与核心并发保存时互相覆盖（丢更新）。
+                OverrideCommand command;
+                command.sequence = next_override_sequence();
+                command.lock = true;
+                command.until_utc = state.next_switch_utc;
+                if (save_override_command(command) && signal_manual_override()) {
+                    // ok: core merges the intent on the manual_event wake-up.
+                } else {
+                    send_toast(L"无法传递手动覆盖指令到后台进程。", L"warning");
+                }
             }
         }
         if (!apply_theme(light)) {
@@ -637,6 +622,20 @@ private:
             send_toast(light ? L"已切换为浅色主题" : L"已切换为深色主题", L"success");
         }
         send_state_to_ui();
+    }
+
+    // 指令序列号取「已存值 + 1」，跨 UI 进程重启仍然单调递增。
+    static std::int64_t next_override_sequence() {
+        const std::int64_t current = load_override_command().sequence;
+        return current < 0 ? 1 : current + 1;
+    }
+
+    // Resize-border hit-test width in physical pixels, DPI-scaled. The system
+    // value already includes SM_CXPADDEDBORDER and scales per monitor DPI.
+    int resize_border_pixels() const {
+        const int frame = GetSystemMetrics(SM_CXSIZEFRAME) +
+                          GetSystemMetrics(SM_CXPADDEDBORDER);
+        return frame > 0 ? frame : 8;
     }
 
     static LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM wp, LPARAM lp) {
@@ -651,17 +650,30 @@ private:
 
         switch (message) {
         case WM_NCCALCSIZE:
-            // Remove standard window frame when wp is TRUE, keeping DWM shadow
-            if (wp == TRUE) return 0;
+            // Remove standard window frame when wp is TRUE, keeping DWM shadow.
+            // When maximized, Windows sizes the window to workarea + one resize
+            // border on every edge; without compensation the client area spills
+            // off-screen and the page's right/bottom margins get clipped.
+            if (wp == TRUE) {
+                if (IsZoomed(window)) {
+                    auto* params = reinterpret_cast<NCCALCSIZE_PARAMS*>(lp);
+                    const int frame = app->resize_border_pixels();
+                    params->rgrc[0].left += frame;
+                    params->rgrc[0].top += frame;
+                    params->rgrc[0].right -= frame;
+                    params->rgrc[0].bottom -= frame;
+                }
+                return 0;
+            }
             return DefWindowProcW(window, message, wp, lp);
 
         case WM_NCHITTEST: {
-            // Resize borders for frameless window
+            // Resize borders for frameless window (system-scaled border width).
             POINT pt = { GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
             ScreenToClient(window, &pt);
             RECT rc;
             GetClientRect(window, &rc);
-            const int border = 8;
+            const int border = app->resize_border_pixels();
 
             if (pt.y < border) {
                 if (pt.x < border) return HTTOPLEFT;
@@ -703,6 +715,8 @@ private:
             // S9①：尺寸变化（含最大化/还原触发的 WM_SIZE）后重新裁角，
             // 并在最大化状态变化时推送 {"type":"window","maximized"}。
             app->sync_window_shape();
+            // 最小化时暂停 3s 轮询；还原/最大化时恢复。零后台开销。
+            app->update_status_timer();
             return 0;
 
         case WM_ACTIVATE:
@@ -712,7 +726,7 @@ private:
             return DefWindowProcW(window, message, wp, lp);
 
         case WM_TIMER:
-            app->send_state_to_ui();
+            if (wp == 1 && !IsIconic(window)) app->send_state_to_ui();
             return 0;
 
         case WM_DESTROY:
@@ -731,9 +745,11 @@ private:
     ComPtr<ICoreWebView2Controller> controller_;
     ComPtr<ICoreWebView2> webview_;
     EventRegistrationToken message_token_{};
+    EventRegistrationToken navigation_token_{};
     bool start_in_settings_ = false;
     bool webview_ready_ = false;
     int webview_attempt_ = 0;
+    bool status_timer_active_ = false;
     bool last_maximized_ = false; // S9②：上次推送的最大化状态（去重）
 };
 

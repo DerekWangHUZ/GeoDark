@@ -98,6 +98,14 @@ int main() {
     const auto disabled = geodark::decide_theme(false, true, utc(2026, 3, 20, 8),
                                                  next_sunset, manual, false);
     CHECK(!disabled.apply && !disabled.manual_override.active);
+
+    // Divergence detection treats unreadable values (-1) as "no change".
+    CHECK(!geodark::theme_diverges(-1, true));
+    CHECK(!geodark::theme_diverges(-1, false));
+    CHECK(geodark::theme_diverges(0, true));
+    CHECK(geodark::theme_diverges(1, false));
+    CHECK(!geodark::theme_diverges(1, true));
+    CHECK(!geodark::theme_diverges(0, false));
     return 0;
 }
 

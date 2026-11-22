@@ -5,7 +5,7 @@
 如果您在 GeoDark 中发现了安全缺陷或潜在隐患，请通过 GitLab 提交**保密 Issue（Confidential Issue）**，或直接联系项目维护者，切勿在公开 Issue 或讨论区披露细节。
 
 在报告中请尽可能详细地说明：
-- 受影响的程序版本（例如 v0.3.1）
+- 受影响的程序版本（例如 v1.0.0）
 - 具体的触发条件与复现步骤
 - 潜在的安全影响与利用场景
 - 建议的修复方案（若有）
@@ -23,7 +23,11 @@ GeoDark 在设计上始终遵循**最小特权（Least Privilege）**与**零云
 - **注册表范围隔离**：
   程序的所有读写操作被严格限制在当前用户的注册表目录 `HKEY_CURRENT_USER\Software\GeoDark` 及启动项目录 `HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Run`，不会触碰全局机器项 `HKEY_LOCAL_MACHINE`。
 - **IPC 通信安全**：
-  配置程序与守护进程之间的同步采用带有命名空间前缀的 Win32 事件对象（`Local\GeoDarkSettingsChangedEvent`），仅限于当前用户登录会话内有效，阻止跨会话越权劫持。
+  配置程序与守护进程之间的同步采用带有命名空间前缀的 Win32 事件对象（`Local\GeoDarkRefreshLocation` 与 `Local\GeoDarkManualOverride`），仅限于当前用户登录会话内有效，阻止跨会话越权劫持。
+- **状态写入单一所有权**：
+  运行态（`HKCU\Software\GeoDark\State`）仅由守护进程写入；配置程序的手动主题意图通过序列号指令子键（`OverrideCommand`）传递，由守护进程合并，杜绝两进程并发写同一键值的竞态。
+- **WebView2 桥最小暴露**：
+  UI 进程内嵌页面为唯一内容（NavigateToString），宿主取消一切其他来源的导航；桥消息解析（`bridge_json.h`）仅支持扁平字段提取，并按 JSON 规范解码转义。
 
 ---
 

@@ -9,6 +9,9 @@ namespace geodark {
 
 inline constexpr wchar_t config_key[] = L"Software\\GeoDark\\Config";
 inline constexpr wchar_t state_key[] = L"Software\\GeoDark\\State";
+// UI -> core one-shot intent command. The UI never writes State directly;
+// it records a sequence-stamped command here and signals manual_event_name.
+inline constexpr wchar_t override_command_key[] = L"Software\\GeoDark\\OverrideCommand";
 inline constexpr wchar_t theme_key[] =
     L"Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize";
 inline constexpr wchar_t refresh_event_name[] = L"Local\\GeoDarkRefreshLocation";
@@ -53,10 +56,19 @@ struct ThemeValues {
     int system = -1;
 };
 
+// UI -> core command payload consumed by the core in override_command_key.
+struct OverrideCommand {
+    std::int64_t sequence = 0;   // monotonically increasing command id
+    bool lock = false;           // lock the current solar phase as manual intent
+    std::int64_t until_utc = 0;  // phase boundary provided by the UI
+};
+
 Config load_config();
 bool save_config(const Config& config);
 State load_state();
 bool save_state(const State& state);
+OverrideCommand load_override_command();
+bool save_override_command(const OverrideCommand& command);
 ThemeValues read_theme();
 bool apply_theme(bool light);
 std::int64_t utc_now();

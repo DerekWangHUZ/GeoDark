@@ -2,6 +2,39 @@
 
 本项目遵循语义化版本规范。所有重要更新与问题修复均记录于此。
 
+## [1.0.0] - 2026-11-23
+
+首个正式版。本版本集中完成了一轮全源码质量审计的全部修复。
+
+### 修复
+
+- **手动主题切换的并发安全（IPC 重构）**：配置程序不再整包写 `State`（与守护进程并发保存时存在丢更新窗口）。新增 `OverrideCommand` 序列号指令子键：UI 写指令并触发 `Local\GeoDarkManualOverride`，守护进程作为唯一状态所有者合并意图。
+- **开机后首次决策覆盖用户主题**：守护进程启动后第一次决策，若系统主题与日照预期不一致（用户在离线期间手动设置），现在播种手动覆盖而不是强行翻转，与运行中的外部变更保护行为一致（README「保护用户意图」承诺现覆盖启动场景）。
+- **无边框窗口最大化裁切**：`WM_NCCALCSIZE` 在最大化时补偿隐藏边框宽度，页面右/下边缘不再被裁掉。
+- **DPI 感知细节**：拖拽热区宽度改用系统缩放值（`SM_CXSIZEFRAME + SM_CXPADDEDBORDER`），高 DPI 下边缘不再难抓；`GetDpiForWindow/GetDpiForSystem` 改为静态链接（进程已声明 PerMonitorV2），移除两处 `GetProcAddress` 动态加载。
+- **`--settings` 参数误判**：改用 `CommandLineToArgvW` 精确匹配，路径中含 `--settings` 子串不再误触发设置视图。
+- **JSON 桥解析合规**：`bridge_json.h` 按规范解码 `\uXXXX`（含 UTF-16 代理对）与全部转义序列，非法序列保留原文不损坏输出；提取器抽为纯函数并新增测试。
+- **外部变更检测精确化**：新增 `theme_diverges` 纯函数，可读主题值与日照预期比较；读不到（-1）不再误判为用户改动。
+
+### 变更
+
+- **WebView2 导航拦截**：宿主取消一切非内嵌页面来源的导航，桥接口不再暴露给外部页面（纵深防御）。
+- **状态轮询降耗**：窗口最小化时暂停 3 秒状态推送定时器，还原时恢复。
+- **ui.log 限容**：超过 1MB 自动清空重写，避免反复失败时无限增长。
+- **静态库更名** `geodark_shared` → `geodark_common`（它不是 DLL，旧名易误导）。
+- **编译告警全覆盖**：`/W4` 从两个可执行目标扩展到全部目标（静态库与测试）。
+
+### 新增
+
+- **`tests/bridge_tests.cpp`**（CTest: bridge）：桥协议 JSON 提取、转义/`\u` 解码（含代理对）、非法输入容错、键名后缀不混淆；策略分歧判定纳入 solar 套件。
+- **持续集成**：`.gitlab-ci.yml`（build/test 两阶段，MSVC Windows Runner）与 `tools/ci.ps1` 本地一键验证脚本。
+- **版本号模板化**：rc 与 manifest 改为 `resources/*.in` 经 `configure_file` 生成，版本号唯一来源是 `project(VERSION)`，单点维护。
+
+### 文档
+
+- **架构文档与代码对齐**：IPC 章节更正为两个真实事件（`Local\GeoDarkRefreshLocation` / `Local\GeoDarkManualOverride`）+ 注册表通知；注册表数据结构按 Config/State/OverrideCommand 三子键重写（旧文档中的 `AutoMode`、`RunOnLogon`、`LastValidLatitude`、`ManualOverrideUntil` 等键名均不存在于代码）；算法章节由闭式时角公式更正为与实现一致的「高度角采样 + 二分求根」模型，并补充意图保护策略说明。
+- `README.md` 架构图、`SECURITY.md` IPC 描述同步更正。
+
 ## [0.3.1] - 2026-10-09
 
 ### 修复

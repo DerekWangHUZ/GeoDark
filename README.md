@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <a href="https://gitlab.com/DerekWangHUZ/GeoDark/-/releases"><img src="https://img.shields.io/badge/release-v0.3.1-blue.svg" alt="Release v0.3.1" /></a>
+  <a href="https://gitlab.com/DerekWangHUZ/GeoDark/-/releases"><img src="https://img.shields.io/badge/release-v1.0.0-blue.svg" alt="Release v1.0.0" /></a>
   <a href="#"><img src="https://img.shields.io/badge/platform-Windows%2011%20x64-0078d4.svg" alt="Platform Windows 11" /></a>
 </p>
 
@@ -47,7 +47,7 @@ GeoDark 是一款专为 Windows 11（兼容 Windows 10 x64）打造的低功耗�
 
 ## 下载与运行
 
-从 [GitLab Releases](https://gitlab.com/DerekWangHUZ/GeoDark/-/releases) 下载最新发行包 `GeoDark-0.3.1-win11-x64.zip`。
+从 [GitLab Releases](https://gitlab.com/DerekWangHUZ/GeoDark/-/releases) 下载最新发行包 `GeoDark-1.0.0-win11-x64.zip`。
 
 ### 系统运行要求
 
@@ -76,16 +76,19 @@ flowchart TD
     subgraph UI ["配置程序 (GeoDarkUI.exe)"]
         A[Win32 无边框阴影宿主] --> B[WebView2 现代交互界面]
         B -->|保存配置| C[写入注册表 HKCU\\Software\\GeoDark]
-        C -->|SetEvent| D[触发命名事件 Local\\GeoDarkSettingsChangedEvent]
+        C -->|SetEvent| D[触发命名事件 Local\\GeoDarkRefreshLocation]
+        B -->|手动切主题| E[写入 OverrideCommand 指令]
+        E -->|SetEvent| F[触发命名事件 Local\\GeoDarkManualOverride]
     end
 
     subgraph Daemon ["后台守护进程 (GeoDark.exe)"]
-        E[隐藏顶层监听窗口] -->|WaitForSingleObject| D
-        E -->|注册接收| F[Windows 电源/时区/时间广播]
-        E -->|C++/WinRT| G[Windows Geolocator 定位引擎]
-        G --> H[NOAA 太阳周期计算引擎]
-        H --> I[决策与手动覆盖策略 Policy]
-        I -->|切换暗黑/浅色| J[更新 Windows 注册表并广播 WM_SETTINGCHANGE]
+        G[隐藏顶层监听窗口] -->|WaitForSingleObject| D
+        G -->|消费指令| F
+        G -->|注册接收| H[Windows 电源/时区/时间广播]
+        G -->|C++/WinRT| I[Windows Geolocator 定位引擎]
+        I --> J[NOAA 太阳周期计算引擎]
+        J --> K[决策与手动覆盖策略 Policy]
+        K -->|切换暗黑/浅色| L[更新 Windows 注册表并广播 WM_SETTINGCHANGE]
     end
 ```
 

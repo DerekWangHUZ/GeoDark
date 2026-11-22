@@ -40,6 +40,7 @@ public:
         config_ = load_config();
         state_ = load_state();
         last_saved_state_ = state_;
+        override_command_sequence_ = load_override_command().sequence;
 
         WNDCLASSW klass{};
         klass.lpfnWndProc = &CoreApp::window_proc;
@@ -97,10 +98,7 @@ public:
                 request_location();
                 schedule_timer();
             } else if (result == WAIT_OBJECT_0 + 4) {
-                const State persisted = load_state();
-                state_.override_active = persisted.override_active;
-                state_.override_phase_light = persisted.override_phase_light;
-                state_.override_until_utc = persisted.override_until_utc;
+                consume_override_command();
                 reconcile();
                 schedule_timer();
             } else if (result == WAIT_OBJECT_0 + 5) {
@@ -197,6 +195,7 @@ private:
         case location_result_message: {
             std::unique_ptr<LocationResult> result(reinterpret_cast<LocationResult*>(lp));
             app->requester_.finish();
+            if (!result) return 0; // defensive: sender guarantees non-null
             if (result->success) {
                 app->state_.has_location = true;
                 app->state_.latitude = result->latitude;
@@ -300,10 +299,20 @@ private:
         state_.next_sunset_utc = schedule.next_sunset_utc;
         state_.polar = schedule.polar;
         bool external_change = false;
-        if (config_.auto_enabled && !state_.override_active && last_applied_light_ >= 0) {
+        if (config_.auto_enabled && !state_.override_active) {
             const ThemeValues actual = read_theme();
-            external_change = (actual.apps >= 0 && actual.apps != last_applied_light_) ||
-                              (actual.system >= 0 && actual.system != last_applied_light_);
+            if (last_applied_light_ >= 0) {
+                // In-session tracking: any readable theme value off the last
+                // applied phase is a user change worth protecting.
+                external_change = theme_diverges(actual.apps, schedule.light_now) ||
+                                  theme_diverges(actual.system, schedule.light_now);
+            } else if (config_.auto_enabled && !schedule.polar) {
+                // First decision of this run (start/reboot): the theme may have
+                // been set by the user while we were not running. Divergence
+                // seeds an override instead of forcibly flipping the theme.
+                external_change = theme_diverges(actual.apps, schedule.light_now) ||
+                                  theme_diverges(actual.system, schedule.light_now);
+            }
         }
         const ThemeDecision decision = decide_theme(
             config_.auto_enabled, schedule.light_now, now, schedule.next_switch_utc,
@@ -319,6 +328,40 @@ private:
             else state_.theme_error.clear();
         }
         persist_state();
+    }
+
+    // UI manual-theme commands arrive sequence-stamped in OverrideCommand.
+    // The UI never rewrites State, so no lost-update race is possible here.
+    void consume_override_command() {
+        const OverrideCommand command = load_override_command();
+        if (command.sequence <= override_command_sequence_) return;
+        override_command_sequence_ = command.sequence;
+        if (!command.lock) {
+            state_.override_active = false;
+            state_.override_phase_light = false;
+            state_.override_until_utc = 0;
+            return;
+        }
+        if (config_.auto_enabled && config_.location_mode == LocationMode::Manual &&
+            !config_.has_manual_coordinates) {
+            return; // no solar phase to lock onto
+        }
+        const auto now = utc_now();
+        std::int64_t until = command.until_utc;
+        bool phase_light = state_.expected_light;
+        if (config_.auto_enabled) {
+            if (until <= now) {
+                // Stale boundary: recompute from the live schedule.
+                const SolarSchedule schedule = calculate_solar_schedule(
+                    now, active_latitude(), active_longitude(),
+                    config_.sunrise_offset_minutes, config_.sunset_offset_minutes);
+                until = schedule.next_switch_utc;
+                phase_light = schedule.light_now;
+            }
+            state_.override_active = true;
+            state_.override_phase_light = phase_light;
+            state_.override_until_utc = until;
+        }
     }
 
     void schedule_timer() {
@@ -356,6 +399,7 @@ private:
     bool running_ = true;
     bool retry_after_inflight_ = false;
     int last_applied_light_ = -1;
+    std::int64_t override_command_sequence_ = 0;
     std::int64_t next_location_due_ = 0;
     std::int64_t network_due_ = 0;
     std::int64_t last_resume_utc_ = 0;
