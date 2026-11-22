@@ -2,6 +2,15 @@
 #include "solar.h"
 #include "ui_html.h"
 
+// GeoDarkUI 宿主窗口（frameless + WebView2）。
+// 桥协议：JS→C++ postMessage({action})，10 个既有 action 原样保留
+// （window_close/window_min/window_max/window_drag/init/refresh_status/
+//   refresh_location/authorize/switch_theme/save）；
+// C++→JS PostWebMessageAsJson：state/config/theme/toast/switch_view，新增
+// {"type":"window","maximized"} 只读通知（html.is-maximized 归零圆角）。
+// S2 同心圆角：SetWindowRgn 按 DPI 裁 32px 圆角，WM_SIZE/WM_DPICHANGED/
+// WM_ACTIVATE 时重裁，IsZoomed 时清区域（见 apply_window_shape）。
+
 #include <windows.h>
 #include <windowsx.h>
 #include <dwmapi.h>
@@ -12,6 +21,7 @@
 #include <WebView2.h>
 
 #include <cmath>
+#include <cstdint>
 #include <cwchar>
 #include <iomanip>
 #include <sstream>
@@ -146,6 +156,63 @@ std::wstring format_hresult(HRESULT hr) {
     wchar_t buf[32];
     swprintf_s(buf, L"0x%08X", static_cast<unsigned int>(hr));
     return buf;
+}
+
+// ============================================================================
+// S2 同心圆角裁角（转写自模板 desktop/window_shape.go）
+// ----------------------------------------------------------------------------
+// 侧栏：外边距 12px、圆角 20px；页面卡片：圆角 12px → 圆心统一 (32,32)。
+// 因此窗口自身也要 32px 圆角，三段圆弧才共用同一个圆心。
+// DWM 只提供 8px/4px 两档系统圆角（DWMWA_WINDOW_CORNER_PREFERENCE），
+// 所以用窗口区域（SetWindowRgn）自己裁一个 32px 圆角矩形；
+// 系统投影与 1px DWM 边框都还在，代价是区域是 1 位掩码、边缘没有抗锯齿。
+// 最大化时系统不给圆角，同样清掉区域（html.is-maximized 由 CSS 归零圆角）。
+// ============================================================================
+constexpr float kWindowCornerRadiusDip = 32.0f;
+
+typedef UINT (WINAPI* GetDpiForWindowProc)(HWND);
+
+// 按当前窗口尺寸与 DPI 重新设置窗口圆角区域。幂等；找不到窗口时静默返回。
+//
+// 注意（PortPilot win.go 已踩过的坑）：SetWindowRgn 传 NULL 清空区域时
+// 成功也返回非 0，不能用返回值判断「清空是否成功」；只有「传了新区域」
+// 时返回 0 才代表失败，需要 DeleteObject 兜底回收。
+void apply_window_shape(HWND hwnd) {
+    if (!hwnd || !IsWindow(hwnd)) return;
+
+    if (IsZoomed(hwnd)) {
+        SetWindowRgn(hwnd, nullptr, TRUE);
+        return;
+    }
+
+    RECT rect{};
+    if (!GetWindowRect(hwnd, &rect)) return;
+    const long w = rect.right - rect.left;
+    const long h = rect.bottom - rect.top;
+    if (w <= 0 || h <= 0) return;
+
+    int dpi = 96;
+    static GetDpiForWindowProc get_dpi_for_window = nullptr;
+    if (!get_dpi_for_window) {
+        if (HMODULE user32 = GetModuleHandleW(L"user32.dll")) {
+            get_dpi_for_window =
+                reinterpret_cast<GetDpiForWindowProc>(GetProcAddress(user32, "GetDpiForWindow"));
+        }
+    }
+    if (get_dpi_for_window) {
+        const UINT window_dpi = get_dpi_for_window(hwnd);
+        if (window_dpi != 0) dpi = static_cast<int>(window_dpi);
+    }
+
+    const int diameter = static_cast<int>(kWindowCornerRadiusDip * dpi / 96.0f + 0.5f) * 2;
+
+    // +1：区域右/下边界是开区间，尺寸要多给 1px 才不会切掉一列像素。
+    HRGN rgn = CreateRoundRectRgn(0, 0, w + 1, h + 1, diameter, diameter);
+    if (!rgn) return;
+    // 成功后区域归系统所有，不能再 DeleteObject。
+    if (!SetWindowRgn(hwnd, rgn, TRUE)) {
+        DeleteObject(rgn);
+    }
 }
 
 // 轻量诊断日志：%LOCALAPPDATA%\GeoDark\ui.log（UTF-16 追加写）。
@@ -325,6 +392,9 @@ private:
                                 send_state_to_ui();
                                 SetTimer(window_, 1, 3000, nullptr);
                                 webview_ready_ = true;
+                                // S9①②：WebView 就绪后立即同步裁角并补推一次最大化
+                                // 状态（JS 启动脚本先用 sessionStorage 兜底首帧）。
+                                sync_window_shape();
                                 append_ui_log(L"WebView2 ready");
                                 return S_OK;
                             }).Get());
@@ -438,6 +508,27 @@ private:
         if (!webview_) return;
         const std::wstring json = L"{\"toast\":{\"text\":\"" + escape_json(text) + L"\",\"type\":\"" + type + L"\"}}";
         webview_->PostWebMessageAsJson(json.c_str());
+    }
+
+    // S9②：最大化状态推送给 UI（独立只读通知 {"type":"window","maximized":bool}，
+    // 不改既有 10 个 action 与 json_extract 字段）。幂等：状态未变化时不重复推。
+    void push_maximized_state(bool maximized) {
+        if (maximized == last_maximized_) return;
+        last_maximized_ = maximized;
+        if (!webview_) return;
+        const std::wstring json = maximized
+            ? L"{\"window\":{\"maximized\":true}}"
+            : L"{\"window\":{\"maximized\":false}}";
+        webview_->PostWebMessageAsJson(json.c_str());
+    }
+
+    // S9①：按当前窗口状态同步裁角（最大化清区域、还原重裁），
+    // 并在最大化状态变化时推送通知。WM_SIZE/WM_DPICHANGED/WM_ACTIVATE 共用。
+    void sync_window_shape() {
+        apply_window_shape(window_);
+        if (window_ && IsWindow(window_)) {
+            push_maximized_state(IsZoomed(window_) != FALSE);
+        }
     }
 
     void save(const std::wstring& json) {
@@ -598,6 +689,8 @@ private:
                 GetClientRect(window, &bounds);
                 app->controller_->put_Bounds(bounds);
             }
+            // S9①：DPI 变化后按新 DPI 重新裁角。
+            app->sync_window_shape();
             return 0;
         }
 
@@ -607,7 +700,16 @@ private:
                 GetClientRect(window, &bounds);
                 app->controller_->put_Bounds(bounds);
             }
+            // S9①：尺寸变化（含最大化/还原触发的 WM_SIZE）后重新裁角，
+            // 并在最大化状态变化时推送 {"type":"window","maximized"}。
+            app->sync_window_shape();
             return 0;
+
+        case WM_ACTIVATE:
+            // S9①：窗口创建后/激活切换后确保裁角生效（模板 window_shape.go
+            // 的「窗口出现后立刻裁剪，避免先看到系统方角」时机）。
+            app->sync_window_shape();
+            return DefWindowProcW(window, message, wp, lp);
 
         case WM_TIMER:
             app->send_state_to_ui();
@@ -632,6 +734,7 @@ private:
     bool start_in_settings_ = false;
     bool webview_ready_ = false;
     int webview_attempt_ = 0;
+    bool last_maximized_ = false; // S9②：上次推送的最大化状态（去重）
 };
 
 } // namespace
