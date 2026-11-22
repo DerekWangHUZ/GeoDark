@@ -152,8 +152,10 @@ inline std::string get_ui_html() {
       --border: oklch(0.3 0.02 265 / 13%);
       --input-line: oklch(0.3 0.02 265 / 15%);
       --ring: oklch(0.7 0 0);
-      --blue: oklch(0.55 0.19 257);
-      --blue-dark: oklch(0.47 0.17 257);
+      /* 强调色机制已移除（官方定调 primary is the ink）：--blue 改为
+         官方中性墨面，主按钮/状态/toast 全部回归单色；变量名保留以最小化 diff。 */
+      --blue: oklch(0.2 0 0);
+      --blue-dark: oklch(0.32 0 0);
 
       /* 边缘收光三件套。rim：顶缘一线光；inner：其内一根更弱的第二线；
          edge：四周发丝线；shade：底下阴影；contact/lift：贴地与抬升两层。 */
@@ -244,8 +246,9 @@ inline std::string get_ui_html() {
       --border: oklch(1 0 0 / 11%);
       --input-line: oklch(1 0 0 / 13%);
       --ring: oklch(0.52 0 0);
-      --blue: oklch(0.76 0.12 250);
-      --blue-dark: oklch(0.72 0.14 250);
+      /* 深色档墨面：官方 --primary oklch(0.94 0 0) 的等效 */
+      --blue: oklch(0.94 0 0);
+      --blue-dark: oklch(0.88 0 0);
 
       --glass-rim: oklch(1 0 0 / 16%);
       --glass-inner: oklch(1 0 0 / 4%);
