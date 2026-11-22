@@ -442,6 +442,17 @@ inline std::string get_ui_html() {
     }
     .page-inner > * { max-width: var(--page-max); }
 
+    /* S9③ 内容区顶部 48px 拖拽带：填满工具栏上方整段让位，好抓不易脱手
+       （data-draggable 复用既有 window_drag 动作）。工具栏标题区一并可拖。 */
+    .drag-strip {
+      position: fixed;
+      top: 0;
+      left: calc(var(--sidebar-w) + var(--sidebar-gap));
+      right: 0;
+      height: 48px;
+      z-index: 30;
+    }
+
     /* S1 工具栏：52px，leading 标题（title1 22px）+ trailing 动作。 */
     .toolbar {
       display: flex; align-items: center; gap: 12px;
@@ -1015,6 +1026,7 @@ inline std::string get_ui_html() {
     html += R"raw(
 <body>
   <div class="window">
+    <div class="drag-strip" data-draggable aria-hidden="true"></div>
     <aside class="sidebar">
       <div class="sidebar__chrome" data-draggable>
         <div class="traffic">
@@ -1369,6 +1381,7 @@ inline std::string get_ui_html() {
 
     // S9③：拖动区扩展——toolbar 与侧栏 chrome/header 标 data-draggable，
     // 触发同一个既有 window_drag 消息（不新增 C++ 动作）。
+    // 双击拖拽带/标题区 = 最大化（与 mac 惯例一致）。
     function bindDragSurface(el) {
       if (!el || el.dataset.dragBound === "1") return;
       el.dataset.dragBound = "1";
@@ -1376,6 +1389,10 @@ inline std::string get_ui_html() {
         if (e.button !== 0) return;
         if (e.target.closest("button, input, select, .traffic, a")) return;
         sendAction({ action: "window_drag" });
+      });
+      el.addEventListener("dblclick", (e) => {
+        if (e.target.closest("button, input, select, .traffic, a")) return;
+        sendAction({ action: "window_max" });
       });
     }
     document.querySelectorAll("[data-draggable]").forEach(bindDragSurface);
