@@ -54,23 +54,32 @@ function Find-CMake {
 
 $cmake = Find-CMake
 Write-Host "使用 CMake: $cmake"
+$buildPath = Join-Path $repo $BuildDir
 
 if ($Configure) {
     Write-Host '== 配置 ==' -ForegroundColor Cyan
-    & $cmake -S $repo -B (Join-Path $repo $BuildDir) -A x64
+    & $cmake -S $repo -B $buildPath -A x64
     if ($LASTEXITCODE -ne 0) { throw "CMake 配置失败（exit $LASTEXITCODE）" }
+
+    # 守卫：assemblyIdentity 版本必须是四段，否则 Windows 加载器报
+    # 「并行配置不正确」而构建仍然全绿（v1.0.0 曾因此发布失败）。
+    $manifest = Join-Path $buildPath 'geodark.manifest'
+    if (-not (Test-Path $manifest)) { throw "未生成清单: $manifest" }
+    if ((Get-Content $manifest -Raw) -notmatch 'version="\d+\.\d+\.\d+\.\d+"') {
+        throw "geodark.manifest 的 assemblyIdentity version 不是四段式，Windows 将报并行配置错误。"
+    }
 }
 
 if ($Build) {
     Write-Host '== 构建 ==' -ForegroundColor Cyan
-    & $cmake --build (Join-Path $repo $BuildDir) --config Release
+    & $cmake --build $buildPath --config Release
     if ($LASTEXITCODE -ne 0) { throw "构建失败（exit $LASTEXITCODE）" }
 }
 
 if ($Test) {
     Write-Host '== 测试 ==' -ForegroundColor Cyan
     $ctest = Join-Path (Split-Path -Parent $cmake) 'ctest.exe'
-    & $ctest --test-dir (Join-Path $repo $BuildDir) -C Release --output-on-failure
+    & $ctest --test-dir $buildPath -C Release --output-on-failure
     if ($LASTEXITCODE -ne 0) { throw "测试失败（exit $LASTEXITCODE）" }
 }
 

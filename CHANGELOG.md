@@ -8,6 +8,7 @@
 
 ### 修复
 
+- **启动失败「并行配置不正确」（SxS）**：`project(VERSION 1.0)` 时 CMake 的 `PROJECT_VERSION` 只有两段，rc/manifest 模板拼接 `.0` 后得到三段式 `1.0.0`，而 Windows `assemblyIdentity` 的 `version` **必须是四段**，导致加载器拒绝启动 `GeoDark.exe` 与 `GeoDarkUI.exe`。改为在 CMake 中显式组装 `MAJOR.MINOR.PATCH.TWEAK`（缺省补 0）并统一供 rc 与 manifest 使用，任何 `VERSION` 写法都稳定产出 `1.0.0.0`。
 - **手动主题切换的并发安全（IPC 重构）**：配置程序不再整包写 `State`（与守护进程并发保存时存在丢更新窗口）。新增 `OverrideCommand` 序列号指令子键：UI 写指令并触发 `Local\GeoDarkManualOverride`，守护进程作为唯一状态所有者合并意图。
 - **开机后首次决策覆盖用户主题**：守护进程启动后第一次决策，若系统主题与日照预期不一致（用户在离线期间手动设置），现在播种手动覆盖而不是强行翻转，与运行中的外部变更保护行为一致（README「保护用户意图」承诺现覆盖启动场景）。
 - **无边框窗口最大化裁切**：`WM_NCCALCSIZE` 在最大化时补偿隐藏边框宽度，页面右/下边缘不再被裁掉。

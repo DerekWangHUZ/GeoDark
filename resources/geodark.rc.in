@@ -23,12 +23,12 @@ BEGIN
         BEGIN
             VALUE "CompanyName", "Derek Wang"
             VALUE "FileDescription", "GeoDark Windows 11 Auto Day/Night Theme Switcher"
-            VALUE "FileVersion", "@PROJECT_VERSION@.0"
+            VALUE "FileVersion", "@GEODARK_VERSION_DOTTED@"
             VALUE "InternalName", "GeoDark"
             VALUE "LegalCopyright", "Copyright (C) 2026 Derek Wang"
             VALUE "OriginalFilename", "GeoDark.exe"
             VALUE "ProductName", "GeoDark"
-            VALUE "ProductVersion", "@PROJECT_VERSION@.0"
+            VALUE "ProductVersion", "@GEODARK_VERSION_DOTTED@"
         END
     END
     BLOCK "VarFileInfo"

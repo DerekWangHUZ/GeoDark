@@ -32,16 +32,26 @@ endif()
 
 # Single source of truth for the binary version metadata: rc and manifest are
 # generated from the project() VERSION (see CHANGELOG 1.0).
-# RC 的 FILEVERSION 必须是四段数字。project(VERSION 1.0) 不提供 PATCH/TWEAK
-# 段（本环境的 CMake 也不展开 PROJECT_VERSION_NUM），这里缺省补零后拼接，
-# 再转成 RC 要求的逗号形式。
-if(NOT PROJECT_VERSION_PATCH)
-  set(PROJECT_VERSION_PATCH 0)
-endif()
-if(NOT PROJECT_VERSION_TWEAK)
-  set(PROJECT_VERSION_TWEAK 0)
-endif()
-string(REGEX REPLACE "\\." "," GEODARK_VERSION_COMMA "${PROJECT_VERSION_MAJOR}.${PROJECT_VERSION_MINOR}.${PROJECT_VERSION_PATCH}.${PROJECT_VERSION_TWEAK}")
+#
+# Windows side-by-side requires a FOUR-part version in assemblyIdentity, while
+# CMake's PROJECT_VERSION drops trailing components (project(VERSION 1.0) gives
+# "1.0"). Assemble the components explicitly so "1.0" becomes "1.0.0.0";
+# concatenating PROJECT_VERSION would yield the invalid 3-part "1.0.0" and
+# every exe would fail to load with "side-by-side configuration is incorrect".
+set(GEODARK_VERSION_MAJOR "${PROJECT_VERSION_MAJOR}")
+set(GEODARK_VERSION_MINOR "${PROJECT_VERSION_MINOR}")
+set(GEODARK_VERSION_PATCH "${PROJECT_VERSION_PATCH}")
+set(GEODARK_VERSION_TWEAK "${PROJECT_VERSION_TWEAK}")
+foreach(version_part GEODARK_VERSION_MINOR GEODARK_VERSION_PATCH GEODARK_VERSION_TWEAK)
+  if("${${version_part}}" STREQUAL "")
+    set(${version_part} 0)
+  endif()
+endforeach()
+set(GEODARK_VERSION_DOTTED
+    "${GEODARK_VERSION_MAJOR}.${GEODARK_VERSION_MINOR}.${GEODARK_VERSION_PATCH}.${GEODARK_VERSION_TWEAK}")
+set(GEODARK_VERSION_COMMA
+    "${GEODARK_VERSION_MAJOR},${GEODARK_VERSION_MINOR},${GEODARK_VERSION_PATCH},${GEODARK_VERSION_TWEAK}")
+
 configure_file(resources/geodark.rc.in "${CMAKE_CURRENT_BINARY_DIR}/geodark.rc" @ONLY)
 configure_file(resources/geodark.manifest.in "${CMAKE_CURRENT_BINARY_DIR}/geodark.manifest" @ONLY)
 set(GEODARK_RESOURCES
