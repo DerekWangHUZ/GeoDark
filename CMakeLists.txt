@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.21)
-project(GeoDark VERSION 1.0.0 LANGUAGES CXX RC)
+project(GeoDark VERSION 1.0 LANGUAGES CXX RC)
 
 if(NOT WIN32 OR NOT CMAKE_SIZEOF_VOID_P EQUAL 8)
   message(FATAL_ERROR "GeoDark requires 64-bit Windows")
@@ -31,7 +31,7 @@ else()
 endif()
 
 # Single source of truth for the binary version metadata: rc and manifest are
-# generated from the project() VERSION (see CHANGELOG 1.0.0).
+# generated from the project() VERSION (see CHANGELOG 1.0).
 configure_file(resources/geodark.rc.in "${CMAKE_CURRENT_BINARY_DIR}/geodark.rc" @ONLY)
 configure_file(resources/geodark.manifest.in "${CMAKE_CURRENT_BINARY_DIR}/geodark.manifest" @ONLY)
 set(GEODARK_RESOURCES

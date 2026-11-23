@@ -17,6 +17,21 @@ param(
 $ErrorActionPreference = 'Stop'
 $repo = Split-Path -Parent $PSScriptRoot
 
+# 完整性标签守卫：目录被标成 Low Mandatory Level 时，Windows 会把其中的可执行文件
+# 一律按 Internet 区对待（安全警告弹窗、WebView2 白屏），产物不可信。构建前强制校正。
+function Ensure-MediumIntegrity {
+    $label = (icacls $repo 2>&1 | Select-String 'Mandatory Label\Low' -SimpleMatch)
+    if ($label) {
+        Write-Host '== 完整性标签：检测到 Low，正在校正为 Medium ==' -ForegroundColor Yellow
+        cmd /c "icacls `"$repo`" /setintegritylevel (OI)(CI)Medium /C /Q" | Out-Null
+        if ((icacls $repo 2>&1 | Select-String 'Mandatory Label\Low' -SimpleMatch)) {
+            throw '目录完整性标签仍为 Low，校正失败，已中止构建。请手动执行：icacls "<目录>" /setintegritylevel (OI)(CI)Medium'
+        }
+        Write-Host '   已校正为 Medium' -ForegroundColor Green
+    }
+}
+Ensure-MediumIntegrity
+
 # 未指定任何阶段时执行全部。
 if (-not ($Configure -or $Build -or $Test)) {
     $Configure = $true; $Build = $true; $Test = $true
