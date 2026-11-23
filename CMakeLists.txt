@@ -32,6 +32,16 @@ endif()
 
 # Single source of truth for the binary version metadata: rc and manifest are
 # generated from the project() VERSION (see CHANGELOG 1.0).
+# RC 的 FILEVERSION 必须是四段数字。project(VERSION 1.0) 不提供 PATCH/TWEAK
+# 段（本环境的 CMake 也不展开 PROJECT_VERSION_NUM），这里缺省补零后拼接，
+# 再转成 RC 要求的逗号形式。
+if(NOT PROJECT_VERSION_PATCH)
+  set(PROJECT_VERSION_PATCH 0)
+endif()
+if(NOT PROJECT_VERSION_TWEAK)
+  set(PROJECT_VERSION_TWEAK 0)
+endif()
+string(REGEX REPLACE "\\." "," GEODARK_VERSION_COMMA "${PROJECT_VERSION_MAJOR}.${PROJECT_VERSION_MINOR}.${PROJECT_VERSION_PATCH}.${PROJECT_VERSION_TWEAK}")
 configure_file(resources/geodark.rc.in "${CMAKE_CURRENT_BINARY_DIR}/geodark.rc" @ONLY)
 configure_file(resources/geodark.manifest.in "${CMAKE_CURRENT_BINARY_DIR}/geodark.manifest" @ONLY)
 set(GEODARK_RESOURCES
