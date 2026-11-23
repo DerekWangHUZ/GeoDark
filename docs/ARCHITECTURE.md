@@ -168,5 +168,5 @@ GeoDark 实现了美国国家海洋和大气管理局（NOAA）太阳位置近�
 | `geodark_bridge_tests`（CTest: bridge） | WebView2 桥协议 | `bridge_json.h` 的字符串/整数/布尔提取、JSON 转义与 `\uXXXX`（含 UTF-16 代理对）解码、非法输入容错 |
 
 - 本地一键验证：`powershell -File tools\ci.ps1`（配置 + 构建 + 全部测试）。
-- GitLab CI：`.gitlab-ci.yml` 定义 build/test 两阶段（需要带 MSVC 的 Windows Runner）。
+- CI：仓库内置 CI 配置在推送时执行 build/test 两阶段（需要带 MSVC 的 Windows Runner）。
 - 版本号唯一来源是 `CMakeLists.txt` 的 `project(GeoDark VERSION ...)`；`resources/*.in` 模板经 `configure_file` 生成 rc 与 manifest，无需手工多处同步。

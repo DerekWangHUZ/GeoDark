@@ -7,8 +7,8 @@
 ## 1. 定位服务不可用或显示“未授权”
 
 ### 现象
-- 在 `GeoDarkUI` 状态栏中，定位状态显示为“定位服务未启用”或“位置未知”。
-- 日志面板输出 `Geolocation access denied` 或获取超时。
+- 在 `GeoDarkUI` 状态栏中，定位状态显示为“未取得”或“等待定位”。
+- 诊断日志中可能出现定位授权被拒绝或请求超时的错误信息。
 
 ### 排查与解决方法
 1. **检查 Windows 系统定位总开关**：
@@ -147,12 +147,12 @@ powershell -File tools\measure.ps1 -Minutes 1
 - 初始化失败时会弹窗提示错误码，并在 `%LOCALAPPDATA%\GeoDark\ui.log` 留下日志。
 
 ### 原因
-白屏 = WebView2 环境创建失败。实测有两类触发条件：
+白屏说明 WebView2 环境创建失败，常见触发条件有两类：
 
 1. **程序所在目录带着 `Low Mandatory Level`（低完整性）NTFS 标签，Windows 把低完整性内容一律按 Internet 区处理**。
    - 表现：该目录下所有文件（含 README.md、新建的任意文件）被 `MapUrlToZone` 判为 Internet 区 → 附件管理器弹“打开文件 - 安全警告”；WebView2 加载器在该路径下无法创建浏览器进程 → UI 必现白屏。
-   - 定位方法：`icacls <目录>` 中可见 `Mandatory Label\Low Mandatory Level:(OI)(CI)(NW)`；因果验证：给空目录打上同样标签，同一份 exe 立刻变 zone=3；标签提回 Medium，立刻恢复 zone=0 且 WebView2 正常。
-   - 来源：目录 ACL 中存在**非本机 SID** 的显式 ACE（`S-1-5-21-2394...` 等），说明整个目录连同 ACL 是从别的机器整目录复制/恢复过来的，低完整性标签随之带入，并被 (OI)(CI) 继承到所有新建文件。签名、机器信任、`Unblock-File`、杀软排除项/信任组/暂停保护全都无效——因为标记不在文件内容或 `Zone.Identifier` 上，而在 NTFS 完整性标签（SACL）上。
+   - 定位方法：`icacls <目录>` 中可见 `Mandatory Label\Low Mandatory Level:(OI)(CI)(NW)`；对照实验：给空目录打上同样标签，同一份 exe 立刻变 zone=3；标签提回 Medium，立刻恢复 zone=0 且 WebView2 正常。
+   - 来源：目录 ACL 中存在**非本机 SID** 的显式 ACE（`S-1-5-21-2394...` 等）。这类 ACL 常见于跨机整目录复制/恢复，低完整性标签随之带入，并被 (OI)(CI) 继承到所有新建文件。签名、机器信任、`Unblock-File`、杀软排除项/信任组/暂停保护对此均无效——标记不在文件内容或 `Zone.Identifier` 上，而在 NTFS 完整性标签（SACL）上。
    - 次生现象：低完整性上下文中运行的未签名程序易被杀软行为引擎误报。它是本问题的次生噪声而非原因，是否处理均不影响修复。
 2. **WebView2 用户数据目录（`%LOCALAPPDATA%\GeoDark\WebView2`）损坏**：浏览器进程启动即退。GeoDark 会自动改名保留现场并重试一次。
 
@@ -162,7 +162,7 @@ powershell -File tools\measure.ps1 -Minutes 1
    icacls "C:\path\to\GeoDark" /setintegritylevel (OI)(CI)M
    ```
    子目录与文件会自动继承更新。完成后用 `tools\diag-zone.ps1` 复查 `zone=0`，弹窗与白屏同时消失，可直接在 `build\Release` 下构建、运行、测试。
-2. **确认使用最新版本**：初始化失败会明确弹窗并写日志，不再静默白屏；用户数据目录损坏会自动重置重试。
+2. **确认初始化失败时的反馈机制**：WebView2 初始化失败会弹窗提示错误码并写入 `%LOCALAPPDATA%\GeoDark\ui.log`；用户数据目录损坏时会自动改名保留现场并重试一次。
 3. **手动核验路径判定**：
    ```powershell
    powershell -NoProfile -ExecutionPolicy Bypass -File tools\diag-zone.ps1 "C:\path\to\GeoDarkUI.exe"

@@ -9,8 +9,8 @@
 </p>
 
 <p align="center">
-  <a href="https://gitlab.com/DerekWangHUZ/GeoDark/-/releases"><img src="https://img.shields.io/badge/release-v1.0-blue.svg" alt="Release v1.0" /></a>
-  <a href="#"><img src="https://img.shields.io/badge/platform-Windows%2011%20x64-0078d4.svg" alt="Platform Windows 11" /></a>
+  <img src="https://img.shields.io/badge/release-v1.0-blue.svg" alt="Release v1.0" />
+  <img src="https://img.shields.io/badge/platform-Windows%2011%20x64-0078d4.svg" alt="Platform Windows 11" />
 </p>
 
 ---
@@ -47,7 +47,24 @@ GeoDark 是一款专为 Windows 11（兼容 Windows 10 x64）打造的低功耗�
 
 ## 下载与运行
 
-从 [GitLab Releases](https://gitlab.com/DerekWangHUZ/GeoDark/-/releases) 下载最新发行包 `GeoDark-1.0-win11-x64.zip`。
+从本仓库的 **Releases（发行页面）** 下载最新发行包 `GeoDark-1.0-win11-x64.zip`，同页附有 `.sha256` 校验文件。
+
+发行包内容：
+
+```text
+GeoDark-1.0-win11-x64\
+  GeoDark.exe          后台守护进程
+  GeoDarkUI.exe        配置程序
+  README.md            发行说明
+  tools\measure.ps1    资源占用测量脚本
+```
+
+下载后可在 PowerShell 中核对完整性：
+
+```powershell
+(Get-FileHash .\GeoDark-1.0-win11-x64.zip -Algorithm SHA256).Hash
+Get-Content .\GeoDark-1.0-win11-x64.zip.sha256
+```
 
 ### 系统运行要求
 
@@ -126,9 +143,11 @@ cmake -S . -B build -A x64
 # 2. 编译 Release 目标
 cmake --build build --config Release
 
-# 3. 运行日照算法自动化测试套件
+# 3. 运行全部自动化测试（solar：日照算法与策略；bridge：桥协议解析）
 ctest --test-dir build -C Release --output-on-failure
 ```
+
+也可使用一键脚本完成配置、构建与测试：`powershell -File tools\ci.ps1`。
 
 编译产物：
 - `build\Release\GeoDark.exe`（后台静默服务）
@@ -146,7 +165,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File tools\sign.ps1 -Dist -Unbloc
 
 ### 安装到用户目录（推荐）
 
-开发仓库路径（`...\source\repos\GeoDark\`）可能被系统路径级安全判定标记为 Internet 区域：从这里直接运行会弹出“打开文件 - 安全警告”，`GeoDarkUI.exe` 也会因 WebView2 无法初始化而白屏（实测复现，详见 [常见问题第 9 条](docs/TROUBLESHOOTING.md#9-geodarkui-启动后窗口一片空白白屏)）。构建并签名后请用安装脚本把程序装入用户程序目录，并从那里运行：
+开发仓库路径（`...\source\repos\GeoDark\`）可能被系统路径级安全判定标记为 Internet 区域：从这里直接运行会弹出“打开文件 - 安全警告”，`GeoDarkUI.exe` 也会因 WebView2 无法初始化而白屏（详见 [常见问题第 9 条](docs/TROUBLESHOOTING.md#9-geodarkui-启动后窗口一片空白白屏)）。构建并签名后请用安装脚本把程序装入用户程序目录，并从那里运行：
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File tools\install.ps1
@@ -168,7 +187,7 @@ powershell -File tools\measure.ps1 -Minutes 1
 
 ## 项目导航与文档
 
-- [版本变更记录 (CHANGELOG.md)](CHANGELOG.md) - 查看各版本特性演进与 Bug 修复历史
+- [版本变更记录 (CHANGELOG.md)](CHANGELOG.md) - 查看完整变更记录
 - [系统架构文档 (docs/ARCHITECTURE.md)](docs/ARCHITECTURE.md) - 深入了解双进程设计、IPC、高 DPI 与算法实现
 - [常见问题与故障排查 (docs/TROUBLESHOOTING.md)](docs/TROUBLESHOOTING.md) - 定位失败、开机自启、DPI 模糊与第三方软件兼容排查
 - [贡献指南 (CONTRIBUTING.md)](CONTRIBUTING.md) - 代码规范、编译要求与合并请求流程
