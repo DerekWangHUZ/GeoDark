@@ -106,6 +106,26 @@ int main() {
     CHECK(geodark::theme_diverges(1, false));
     CHECK(!geodark::theme_diverges(1, true));
     CHECK(!geodark::theme_diverges(0, false));
+
+    // External-change detection must not mistake a solar boundary for a user
+    // change: the expectation flips before the theme is applied, while the
+    // theme still equals what GeoDark itself applied last.
+    const geodark::ThemeObservation light_theme{1, 1};
+    const geodark::ThemeObservation dark_theme{0, 0};
+    CHECK(!geodark::external_theme_change(light_theme, 1, true, true, false, false));
+    CHECK(!geodark::external_theme_change(dark_theme, 0, true, false, true, false));
+    // A theme that diverges from the last applied phase is a user change.
+    CHECK(geodark::external_theme_change(dark_theme, 1, true, true, true, false));
+    CHECK(geodark::external_theme_change(light_theme, 0, true, false, false, false));
+    // Unreadable values never count as a change.
+    CHECK(!geodark::external_theme_change({-1, -1}, 1, true, true, false, false));
+    // First decision after a restart: same phase, theme chosen while the daemon
+    // was off -> protect; the solar phase moved on -> catch up.
+    CHECK(geodark::external_theme_change(dark_theme, -1, true, true, true, false));
+    CHECK(!geodark::external_theme_change(light_theme, -1, true, true, false, false));
+    // No persisted state (fresh install) and polar phases never protect.
+    CHECK(!geodark::external_theme_change(dark_theme, -1, false, false, true, false));
+    CHECK(!geodark::external_theme_change(dark_theme, -1, true, true, true, true));
     return 0;
 }
 

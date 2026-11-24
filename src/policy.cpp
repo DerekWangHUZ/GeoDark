@@ -29,4 +29,22 @@ bool theme_diverges(int actual_light, bool expected_light) {
     return (actual_light != 0) != expected_light;
 }
 
+bool external_theme_change(const ThemeObservation& actual, int session_applied_light,
+                           bool has_persisted_state, bool persisted_expected_light,
+                           bool expected_light, bool polar) {
+    if (session_applied_light >= 0) {
+        // Steady state: divergence from what GeoDark itself last applied is a
+        // user change. Never compare against the freshly computed expectation
+        // here, because at a solar boundary the expectation flips before the
+        // new theme is applied and that must not read as user intent.
+        const bool applied_light = session_applied_light != 0;
+        return theme_diverges(actual.apps, applied_light) ||
+               theme_diverges(actual.system, applied_light);
+    }
+    if (!has_persisted_state || polar) return false;
+    if (persisted_expected_light != expected_light) return false; // missed transition: catch up
+    return theme_diverges(actual.apps, expected_light) ||
+           theme_diverges(actual.system, expected_light);
+}
+
 } // namespace geodark

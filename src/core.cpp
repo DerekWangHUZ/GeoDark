@@ -41,6 +41,11 @@ public:
         state_ = load_state();
         last_saved_state_ = state_;
         override_command_sequence_ = load_override_command().sequence;
+        // Snapshot the previous run's solar phase before reconcile() updates it;
+        // the first decision uses it to tell a missed transition from a theme
+        // the user chose while the daemon was not running.
+        persisted_known_ = state_initialized();
+        persisted_expected_light_ = state_.expected_light;
 
         WNDCLASSW klass{};
         klass.lpfnWndProc = &CoreApp::window_proc;
@@ -301,18 +306,9 @@ private:
         bool external_change = false;
         if (config_.auto_enabled && !state_.override_active) {
             const ThemeValues actual = read_theme();
-            if (last_applied_light_ >= 0) {
-                // In-session tracking: any readable theme value off the last
-                // applied phase is a user change worth protecting.
-                external_change = theme_diverges(actual.apps, schedule.light_now) ||
-                                  theme_diverges(actual.system, schedule.light_now);
-            } else if (config_.auto_enabled && !schedule.polar) {
-                // First decision of this run (start/reboot): the theme may have
-                // been set by the user while we were not running. Divergence
-                // seeds an override instead of forcibly flipping the theme.
-                external_change = theme_diverges(actual.apps, schedule.light_now) ||
-                                  theme_diverges(actual.system, schedule.light_now);
-            }
+            external_change = external_theme_change(
+                {actual.apps, actual.system}, last_applied_light_, persisted_known_,
+                persisted_expected_light_, schedule.light_now, schedule.polar);
         }
         const ThemeDecision decision = decide_theme(
             config_.auto_enabled, schedule.light_now, now, schedule.next_switch_utc,
@@ -399,6 +395,8 @@ private:
     bool running_ = true;
     bool retry_after_inflight_ = false;
     int last_applied_light_ = -1;
+    bool persisted_known_ = false;
+    bool persisted_expected_light_ = false;
     std::int64_t override_command_sequence_ = 0;
     std::int64_t next_location_due_ = 0;
     std::int64_t network_due_ = 0;

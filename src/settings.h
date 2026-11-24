@@ -67,6 +67,8 @@ Config load_config();
 bool save_config(const Config& config);
 State load_state();
 bool save_state(const State& state);
+// True when the State key already exists, i.e. the daemon has run before.
+bool state_initialized();
 OverrideCommand load_override_command();
 bool save_override_command(const OverrideCommand& command);
 ThemeValues read_theme();

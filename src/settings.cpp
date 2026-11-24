@@ -170,6 +170,13 @@ bool save_state(const State& state) {
     return success;
 }
 
+bool state_initialized() {
+    HKEY key = open_key(state_key, KEY_READ, false);
+    if (!key) return false;
+    RegCloseKey(key);
+    return true;
+}
+
 // The UI records a sequence-stamped command instead of rewriting State, so the
 // core (the single state owner) merges it without lost-update races.
 OverrideCommand load_override_command() {
