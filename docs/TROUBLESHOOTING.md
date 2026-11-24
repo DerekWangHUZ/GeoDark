@@ -152,16 +152,20 @@ powershell -File tools\measure.ps1 -Minutes 1
 1. **程序所在目录带着 `Low Mandatory Level`（低完整性）NTFS 标签，Windows 把低完整性内容一律按 Internet 区处理**。
    - 表现：该目录下所有文件（含 README.md、新建的任意文件）被 `MapUrlToZone` 判为 Internet 区 → 附件管理器弹“打开文件 - 安全警告”；WebView2 加载器在该路径下无法创建浏览器进程 → UI 必现白屏。
    - 定位方法：`icacls <目录>` 中可见 `Mandatory Label\Low Mandatory Level:(OI)(CI)(NW)`；对照实验：给空目录打上同样标签，同一份 exe 立刻变 zone=3；标签提回 Medium，立刻恢复 zone=0 且 WebView2 正常。
-   - 来源：目录 ACL 中存在**非本机 SID** 的显式 ACE（`S-1-5-21-2394...` 等）。这类 ACL 常见于跨机整目录复制/恢复，低完整性标签随之带入，并被 (OI)(CI) 继承到所有新建文件。签名、机器信任、`Unblock-File`、杀软排除项/信任组/暂停保护对此均无效——标记不在文件内容或 `Zone.Identifier` 上，而在 NTFS 完整性标签（SACL）上。
+   - 来源：目录 ACL 中存在**非本机 SID** 的显式 ACE（`S-1-5-21-2394...` 等），这类 ACL 常见于跨机整目录复制/恢复，低完整性标签随之带入，并被 (OI)(CI) 继承到所有新建文件。另一种常见来源是**沙箱/代理运行时**：为让受限进程能在工作区内写入，它会给目录临时打上 Low 标签（正常退出时会清除，会话异常终止则可能残留）。签名、机器信任、`Unblock-File`、杀软排除项/信任组/暂停保护对此均无效——标记不在文件内容或 `Zone.Identifier` 上，而在 NTFS 完整性标签（SACL）上。
    - 次生现象：低完整性上下文中运行的未签名程序易被杀软行为引擎误报。它是本问题的次生噪声而非原因，是否处理均不影响修复。
 2. **WebView2 用户数据目录（`%LOCALAPPDATA%\GeoDark\WebView2`）损坏**：浏览器进程启动即退。GeoDark 会自动改名保留现场并重试一次。
 
 ### 解决方法
-1. **给程序目录打回正常完整性级别（根治）**：
+1. **给程序目录打回正常完整性级别（根治）**：一条命令即可完成诊断与修复，修复后会自动复核区域判定：
+   ```powershell
+   powershell -NoProfile -ExecutionPolicy Bypass -File tools\diag-zone.ps1 "C:\path\to\GeoDark" -Fix
+   ```
+   等价的手动命令（目录用 `(OI)(CI)` 让子目录与文件继承）：
    ```cmd
    icacls "C:\path\to\GeoDark" /setintegritylevel (OI)(CI)M
    ```
-   子目录与文件会自动继承更新。完成后用 `tools\diag-zone.ps1` 复查 `zone=0`，弹窗与白屏同时消失，可直接在 `build\Release` 下构建、运行、测试。
+   完成后 `zone=0`，弹窗与白屏同时消失，可直接在 `build\Release` 下构建、运行、测试。若 `-Fix` 后仍为 `zone=3`，说明标签在**父目录**上：对父目录再跑一次同一条命令。
 2. **确认初始化失败时的反馈机制**：WebView2 初始化失败会弹窗提示错误码并写入 `%LOCALAPPDATA%\GeoDark\ui.log`；用户数据目录损坏时会自动改名保留现场并重试一次。
 3. **手动核验路径判定**：
    ```powershell

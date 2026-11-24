@@ -68,6 +68,12 @@ if ($Configure) {
     if ((Get-Content $manifest -Raw) -notmatch 'version="\d+\.\d+\.\d+\.\d+"') {
         throw "geodark.manifest 的 assemblyIdentity version 不是四段式，Windows 将报并行配置错误。"
     }
+
+    # 守卫：工作区若被打了 Low 完整性标签，Windows 会把产物按 Internet 区处理，
+    # 运行 exe 会弹安全警告、WebView2 界面可能白屏。只提示，不阻断构建。
+    if (((icacls $repo 2>&1) -join "`n") -match 'Mandatory Label\\Low Mandatory Level') {
+        Write-Warning "工作区带有 Low 完整性标签：运行 tools\diag-zone.ps1 '$repo' -Fix 可修复（否则 exe 会被当作 Internet 区内容）。"
+    }
 }
 
 if ($Build) {

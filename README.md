@@ -165,7 +165,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File tools\sign.ps1 -Dist -Unbloc
 
 ### 安装到用户目录（推荐）
 
-开发仓库路径（`...\source\repos\GeoDark\`）可能被系统路径级安全判定标记为 Internet 区域：从这里直接运行会弹出“打开文件 - 安全警告”，`GeoDarkUI.exe` 也会因 WebView2 无法初始化而白屏（详见 [常见问题第 9 条](docs/TROUBLESHOOTING.md#9-geodarkui-启动后窗口一片空白白屏)）。构建并签名后请用安装脚本把程序装入用户程序目录，并从那里运行：
+开发仓库路径（`...\source\repos\GeoDark\`）可能被系统路径级安全判定标记为 Internet 区域：从这里直接运行会弹出“打开文件 - 安全警告”，`GeoDarkUI.exe` 也会因 WebView2 无法初始化而白屏（详见 [常见问题第 9 条](docs/TROUBLESHOOTING.md#9-geodarkui-启动后窗口一片空白白屏)）。可先运行 `tools\diag-zone.ps1 "C:\path\to\GeoDark" -Fix` 修复目录的完整性标签并复核判定，再用安装脚本把程序装入用户程序目录运行：
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File tools\install.ps1
