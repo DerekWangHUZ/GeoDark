@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/release-v1.0-blue.svg" alt="Release v1.0" />
+  <img src="https://img.shields.io/badge/release-v1.1-blue.svg" alt="Release v1.1" />
   <img src="https://img.shields.io/badge/platform-Windows%2011%20x64-0078d4.svg" alt="Platform Windows 11" />
 </p>
 
@@ -47,12 +47,12 @@ GeoDark 是一款专为 Windows 11（兼容 Windows 10 x64）打造的低功耗�
 
 ## 下载与运行
 
-从本仓库的 **Releases（发行页面）** 下载最新发行包 `GeoDark-1.0-win11-x64.zip`，同页附有 `.sha256` 校验文件。
+从本仓库的 **Releases（发行页面）** 下载最新发行包 `GeoDark-1.1-win11-x64.zip`，同页附有 `.sha256` 校验文件。
 
 发行包内容：
 
 ```text
-GeoDark-1.0-win11-x64\
+GeoDark-1.1-win11-x64\
   GeoDark.exe          后台守护进程
   GeoDarkUI.exe        配置程序
   README.md            发行说明
@@ -62,8 +62,8 @@ GeoDark-1.0-win11-x64\
 下载后可在 PowerShell 中核对完整性：
 
 ```powershell
-(Get-FileHash .\GeoDark-1.0-win11-x64.zip -Algorithm SHA256).Hash
-Get-Content .\GeoDark-1.0-win11-x64.zip.sha256
+(Get-FileHash .\GeoDark-1.1-win11-x64.zip -Algorithm SHA256).Hash
+Get-Content .\GeoDark-1.1-win11-x64.zip.sha256
 ```
 
 ### 系统运行要求
